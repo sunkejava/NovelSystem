@@ -69,6 +69,6 @@ public static class DatabaseInitializer
         }
 
         if (!columns.Contains("VoiceProfileId", StringComparer.OrdinalIgnoreCase))
-            await db.Database.ExecuteSqlRawAsync("ALTER TABLE "Characters" ADD COLUMN "VoiceProfileId" INTEGER NULL;", cancellationToken);
+            await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Characters\" ADD COLUMN \"VoiceProfileId\" INTEGER NULL;", cancellationToken);
     }
 }
