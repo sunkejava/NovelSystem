@@ -31,7 +31,8 @@ async function upload(o:any){
 
 async function learn(row:any){
   await writingApi.learn(row.id);
-  router.push('/writing');
+  ElMessage.success('写法学习任务已创建，可在写作风格页面查看实时进度');
+  router.push('/styles');
 }
 
 async function openEditor(row:any){

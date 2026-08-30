@@ -13,7 +13,8 @@ const map:Record<string,string>={
   Stopped:'stopped',
   Failed:'danger',
   Pending:'queued',
-  BuildingPrompt:'running'
+  BuildingPrompt:'running',
+  Generating:'running'
 };
 </script>
 <template><span class="status-badge" :class="map[status]||'queued'"><i></i>{{status}}</span></template>

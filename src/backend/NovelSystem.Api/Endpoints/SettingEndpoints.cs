@@ -106,6 +106,63 @@ public static class SettingEndpoints
             }
         });
 
+        group.MapPost("/test-ffmpeg", async (AppDbContext db, CancellationToken ct) =>
+        {
+            var ffmpegPath = await db.Settings
+                .Where(x => x.Key == "FfmpegPath")
+                .Select(x => x.Value)
+                .FirstOrDefaultAsync(ct) ?? "ffmpeg";
+
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = ffmpegPath,
+                    Arguments = "-version",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = Process.Start(startInfo)
+                    ?? throw new InvalidOperationException("无法启动 FFmpeg 进程。");
+
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(10));
+                await process.WaitForExitAsync(timeout.Token);
+
+                var output = await process.StandardOutput.ReadToEndAsync(ct);
+                var error = await process.StandardError.ReadToEndAsync(ct);
+                sw.Stop();
+
+                var firstLine = (string.IsNullOrWhiteSpace(output) ? error : output)
+                    .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault() ?? "FFmpeg detected";
+
+                return Results.Ok(new
+                {
+                    online = process.ExitCode == 0,
+                    latencyMs = sw.ElapsedMilliseconds,
+                    path = ffmpegPath,
+                    version = firstLine,
+                    exitCode = process.ExitCode
+                });
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                return Results.Ok(new
+                {
+                    online = false,
+                    latencyMs = sw.ElapsedMilliseconds,
+                    path = ffmpegPath,
+                    error = ex.Message
+                });
+            }
+        });
+
         group.MapGet("/ai-status", async (AppDbContext db, IHttpClientFactory factory, CancellationToken ct) =>
         {
             var settings = db.Settings.ToDictionary(x => x.Key, x => x.Value);

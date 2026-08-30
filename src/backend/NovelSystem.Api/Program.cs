@@ -29,4 +29,5 @@ app.MapVoiceProfileEndpoints();
 app.MapJobEndpoints();
 app.MapSettingEndpoints();
 app.MapWritingEndpoints();
+app.MapAudioEndpoints();
 app.Run();

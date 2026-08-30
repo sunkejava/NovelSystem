@@ -11,6 +11,7 @@ const routes:RouteRecordRaw[]=[
       {path:'novels',component:()=>import('../views/NovelLibraryView.vue')},
       {path:'novels/:id',component:()=>import('../views/NovelWorkspaceView.vue')},
       {path:'jobs',component:()=>import('../views/JobCenterView.vue')},
+      {path:'styles',component:()=>import('../views/WritingStyleView.vue')},
       {path:'writing',component:()=>import('../views/WritingStudioView.vue')},
       {path:'settings',component:()=>import('../views/SettingsView.vue')}
     ]

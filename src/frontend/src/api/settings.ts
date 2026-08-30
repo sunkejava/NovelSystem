@@ -6,5 +6,6 @@ export const settingApi={
   voices:()=>http.get('/settings/voices').then(r=>r.data),
   testAi:()=>http.post('/settings/test-ai').then(r=>r.data),
   testTts:()=>http.post('/settings/test-tts').then(r=>r.data),
+  testFfmpeg:()=>http.post('/settings/test-ffmpeg').then(r=>r.data),
   aiStatus:()=>http.get('/settings/ai-status').then(r=>r.data)
 };

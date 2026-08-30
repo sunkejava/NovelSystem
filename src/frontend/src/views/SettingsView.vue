@@ -15,8 +15,10 @@ const savingVoice=ref(false);
 const batchCreating=ref(false);
 const testingAi=ref(false);
 const testingTts=ref(false);
+const testingFfmpeg=ref(false);
 const aiTest=ref<any>(null);
 const ttsTest=ref<any>(null);
+const ffmpegTest=ref<any>(null);
 const {mode,accent,setMode,setAccent}=useTheme();
 
 const accents=['#43e8ff','#5979ff','#7c6cff','#a855f7','#ff4fd8','#21d19f','#ff9f43'];
@@ -62,6 +64,16 @@ async function testAi(){
     if(aiTest.value.online) ElMessage.success('LLM 连接成功，响应 '+aiTest.value.latencyMs+' ms');
     else ElMessage.error('LLM 连接失败：'+(aiTest.value.error||'未知错误'));
   }finally{testingAi.value=false;}
+}
+
+async function testFfmpeg(){
+  testingFfmpeg.value=true;
+  try{
+    await settingApi.save(form.value);
+    ffmpegTest.value=await settingApi.testFfmpeg();
+    if(ffmpegTest.value.online) ElMessage.success('FFmpeg 可用：'+ffmpegTest.value.version);
+    else ElMessage.error('FFmpeg 检测失败：'+(ffmpegTest.value.error||'未知错误'));
+  }finally{testingFfmpeg.value=false;}
 }
 
 async function testTts(){
@@ -212,6 +224,14 @@ onMounted(load);
         <el-form-item label="Prompt 缓存目录"><el-input v-model="form.PromptDirectory"/></el-form-item>
         <el-form-item label="FFmpeg 路径"><el-input v-model="form.FfmpegPath"/></el-form-item>
       </el-form>
+      <div class="model-test-row">
+        <el-button class="ghost-button" :loading="testingFfmpeg" @click="testFfmpeg">检测 FFmpeg</el-button>
+        <div v-if="ffmpegTest" class="test-result" :class="{online:ffmpegTest.online}">
+          <span class="engine-led"></span>
+          <b>{{ffmpegTest.online?'FFmpeg 可用':'FFmpeg 不可用'}}</b>
+          <small>{{ffmpegTest.online?ffmpegTest.version:(ffmpegTest.error||'检测失败')}}</small>
+        </div>
+      </div>
       <div class="voice-count">{{wavFiles.length}} <small>REFERENCE WAV FILES DETECTED</small></div>
     </section>
   </div>

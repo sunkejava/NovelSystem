@@ -11,6 +11,7 @@ const menus=[
   {path:'/dashboard',label:'智能总览',icon:DataAnalysis},
   {path:'/novels',label:'小说资产',icon:Document},
   {path:'/jobs',label:'任务中枢',icon:Operation},
+  {path:'/styles',label:'写作风格',icon:MagicStick},
   {path:'/writing',label:'AI 创作舱',icon:MagicStick},
   {path:'/settings',label:'模型设置',icon:Setting}
 ];
@@ -21,19 +22,16 @@ const accents=['#43e8ff','#7c6cff','#ff4fd8','#21d19f','#ff9f43'];
 <template>
 <div class="app-shell">
   <div class="ambient-grid"></div>
-
   <aside class="sidebar glass-panel">
     <div class="brand">
       <div class="brand-orb"><el-icon><Cpu/></el-icon></div>
       <div><strong>NOVEL<span>AI</span></strong><small>STORY INTELLIGENCE</small></div>
     </div>
-
     <nav>
       <button v-for="item in menus" :key="item.path" class="nav-item" :class="{active:route.path.startsWith(item.path)}" @click="router.push(item.path)">
         <el-icon><component :is="item.icon"/></el-icon><span>{{item.label}}</span><i></i>
       </button>
     </nav>
-
     <div class="sidebar-foot">
       <span class="pulse-dot"></span>
       <div><b>LOCAL AI ONLINE</b><small>Private · Offline · Secure</small></div>
@@ -53,7 +51,6 @@ const accents=['#43e8ff','#7c6cff','#ff4fd8','#21d19f','#ff9f43'];
         <div class="top-status"><span>LLAMA.CPP</span><span>QWEN3-TTS</span><span>FFMPEG</span></div>
       </div>
     </header>
-
     <main class="page-container"><router-view/></main>
   </section>
 </div>
