@@ -61,7 +61,7 @@ public static class DatabaseInitializer
 
         var characterColumns = await GetColumnsAsync(db, "Characters", cancellationToken);
         if (!characterColumns.Contains("VoiceProfileId", StringComparer.OrdinalIgnoreCase))
-            await db.Database.ExecuteSqlRawAsync("ALTER TABLE "Characters" ADD COLUMN "VoiceProfileId" INTEGER NULL;", cancellationToken);
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Characters" ADD COLUMN "VoiceProfileId" INTEGER NULL;""", cancellationToken);
     }
 
     private static async Task EnsureJobCheckpointSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
@@ -69,11 +69,11 @@ public static class DatabaseInitializer
         var columns = await GetColumnsAsync(db, "Jobs", cancellationToken);
 
         if (!columns.Contains("Checkpoint", StringComparer.OrdinalIgnoreCase))
-            await db.Database.ExecuteSqlRawAsync("ALTER TABLE "Jobs" ADD COLUMN "Checkpoint" INTEGER NOT NULL DEFAULT 0;", cancellationToken);
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "Checkpoint" INTEGER NOT NULL DEFAULT 0;""", cancellationToken);
         if (!columns.Contains("TotalSteps", StringComparer.OrdinalIgnoreCase))
-            await db.Database.ExecuteSqlRawAsync("ALTER TABLE "Jobs" ADD COLUMN "TotalSteps" INTEGER NOT NULL DEFAULT 0;", cancellationToken);
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "TotalSteps" INTEGER NOT NULL DEFAULT 0;""", cancellationToken);
         if (!columns.Contains("RetryCount", StringComparer.OrdinalIgnoreCase))
-            await db.Database.ExecuteSqlRawAsync("ALTER TABLE "Jobs" ADD COLUMN "RetryCount" INTEGER NOT NULL DEFAULT 0;", cancellationToken);
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "RetryCount" INTEGER NOT NULL DEFAULT 0;""", cancellationToken);
     }
 
     private static async Task<List<string>> GetColumnsAsync(AppDbContext db, string tableName, CancellationToken cancellationToken)
