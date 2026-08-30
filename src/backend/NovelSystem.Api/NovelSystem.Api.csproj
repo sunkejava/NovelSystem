@@ -5,6 +5,6 @@
     <ProjectReference Include="../NovelSystem.Application/NovelSystem.Application.csproj" />
     <ProjectReference Include="../NovelSystem.Infrastructure/NovelSystem.Infrastructure.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.0" />
+    
   </ItemGroup>
 </Project>
