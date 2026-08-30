@@ -31,11 +31,12 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
 
         // Checkpoint 表示已经完成的块数，失败重试时从该位置继续。
         var startIndex = Math.Clamp(job.Checkpoint, 0, chunks.Count);
+        // SQLite/EF Core 无法翻译 Select(...).DefaultIfEmpty(0).MaxAsync()。
+        // 改为 nullable Max 聚合，空集合时返回 null，再在应用层回退为 0。
         var scriptOrder = await db.ScriptLines
             .Where(x => x.NovelId == novelId)
-            .Select(x => x.Order)
-            .DefaultIfEmpty(0)
-            .MaxAsync(cancellationToken);
+            .MaxAsync(x => (int?)x.Order, cancellationToken)
+            ?? 0;
 
         for (var index = startIndex; index < chunks.Count; index++)
         {
