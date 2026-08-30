@@ -183,6 +183,15 @@ onMounted(load);
           <el-form-item label="小说自动拆分长度（字符）">
             <el-input v-model="form.AiChunkSize" type="number" placeholder="12000"/>
           </el-form-item>
+          <el-form-item label="解析最大输出 Token">
+            <el-input v-model="form.AiAnalysisMaxTokens" type="number" placeholder="16384"/>
+          </el-form-item>
+          <el-form-item label="llama.cpp Prompt Cache">
+            <el-select v-model="form.AiCachePrompt" class="full-width">
+              <el-option label="启用（推荐）" value="true"/>
+              <el-option label="禁用" value="false"/>
+            </el-select>
+          </el-form-item>
         </div>
       </el-form>
       <div class="model-test-row">

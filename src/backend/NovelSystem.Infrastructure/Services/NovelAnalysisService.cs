@@ -8,9 +8,30 @@ using NovelSystem.Infrastructure.Jobs;
 
 namespace NovelSystem.Infrastructure.Services;
 
-/// <summary>负责长小说分块解析、人物去重、脚本顺序化和断点续跑。</summary>
+/// <summary>
+/// 长小说人物/脚本解析服务。
+/// 优化重点：LLM 分块调用 + Prompt Cache + 人物一次加载 + 脚本批量映射/写入，
+/// 避免原实现每个人物/每条脚本一次数据库查询造成的 N+1 性能问题。
+/// </summary>
 public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient) : INovelAnalysisService
 {
+    private const string AnalysisSystemPrompt =
+        "你是专业中文小说结构分析器。任务是提取人物与可用于多角色TTS的脚本。必须只输出合法JSON，不要解释。";
+
+    private const string AnalysisInstruction =
+        """
+        按原文顺序提取人物与TTS脚本。
+        要求：
+        1. characters 只列本片段真实出现的重要人物；不要把“旁白”当人物。
+        2. scripts 必须覆盖需要朗读的正文；人物对白 speaker=人物名，叙述内容 speaker=旁白。
+        3. text 保留原文语义，不增加解释，不重复。
+        4. emotion 使用简短中文情绪词，没有明显情绪可留空。
+        输出JSON：
+        {"characters":[{"name":"","gender":"","personality":"","description":""}],"scripts":[{"speaker":"人物名或旁白","text":"","emotion":""}]}
+
+        小说片段：
+        """;
+
     public async Task AnalyzeAsync(long novelId, long jobId, CancellationToken cancellationToken = default)
     {
         var novel = await db.Novels.FindAsync([novelId], cancellationToken)
@@ -18,7 +39,11 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
         var job = await db.Jobs.FindAsync([jobId], cancellationToken)
                   ?? throw new InvalidOperationException("任务不存在。");
 
-        var chunkText = db.Settings.FirstOrDefault(x => x.Key == "AiChunkSize")?.Value ?? "12000";
+        var chunkText = await db.Settings
+            .Where(x => x.Key == "AiChunkSize")
+            .Select(x => x.Value)
+            .FirstOrDefaultAsync(cancellationToken) ?? "12000";
+
         var chunkSize = int.TryParse(chunkText, out var configured)
             ? Math.Clamp(configured, 1000, 100000)
             : 12000;
@@ -26,17 +51,25 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
         novel.Status = NovelStatus.Analyzing;
         await db.SaveChangesAsync(cancellationToken);
 
-        var chunks = Split(novel.Content, chunkSize).ToList();
+        // 尽量按段落边界切块，避免硬切在一句对白中间，减少模型重复理解上下文。
+        var chunks = SplitByParagraph(novel.Content, chunkSize).ToList();
         job.TotalSteps = chunks.Count;
 
-        // Checkpoint 表示已经完成的块数，失败重试时从该位置继续。
         var startIndex = Math.Clamp(job.Checkpoint, 0, chunks.Count);
-        // SQLite/EF Core 无法翻译 Select(...).DefaultIfEmpty(0).MaxAsync()。
-        // 改为 nullable Max 聚合，空集合时返回 null，再在应用层回退为 0。
+
         var scriptOrder = await db.ScriptLines
             .Where(x => x.NovelId == novelId)
             .MaxAsync(x => (int?)x.Order, cancellationToken)
             ?? 0;
+
+        // 一次性加载现有人物，后续所有分块在内存字典中判断/映射。
+        var existingCharacters = await db.Characters
+            .Where(x => x.NovelId == novelId)
+            .ToListAsync(cancellationToken);
+
+        var characterMap = existingCharacters
+            .GroupBy(x => NormalizeName(x.Name), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
 
         for (var index = startIndex; index < chunks.Count; index++)
         {
@@ -44,56 +77,78 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
             if (job.Status == "Stopping")
                 throw new OperationCanceledException("任务已由用户停止。");
 
-            var raw = await aiClient.ChatAsync(
-                "你是专业小说结构分析器。只输出合法 JSON。",
-                "提取人物和多角色 TTS 脚本。JSON格式：{\"characters\":[{\"name\":\"\",\"gender\":\"\",\"personality\":\"\",\"description\":\"\"}],\"scripts\":[{\"speaker\":\"人物名或旁白\",\"text\":\"\",\"emotion\":\"\"}]}\n\n" + chunks[index],
+            var raw = await aiClient.ChatJsonAsync(
+                AnalysisSystemPrompt,
+                AnalysisInstruction + chunks[index],
                 cancellationToken);
 
             var result = JsonSerializer.Deserialize<AiAnalysisResult>(
                 NormalizeJson(raw),
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new AiAnalysisResult();
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                ?? new AiAnalysisResult();
 
-            foreach (var item in result.Characters.Where(x => !string.IsNullOrWhiteSpace(x.Name)))
+            // 先在内存里计算本块新增人物，单次 AddRange + SaveChanges。
+            var newCharacters = new List<Character>();
+            foreach (var item in result.Characters)
             {
-                var exists = await db.Characters.AnyAsync(
-                    x => x.NovelId == novelId && x.Name == item.Name,
-                    cancellationToken);
+                var normalizedName = NormalizeName(item.Name);
+                if (string.IsNullOrWhiteSpace(normalizedName) ||
+                    normalizedName.Equals("旁白", StringComparison.OrdinalIgnoreCase) ||
+                    characterMap.ContainsKey(normalizedName))
+                    continue;
 
-                if (!exists)
+                var character = new Character
                 {
-                    db.Characters.Add(new Character
-                    {
-                        NovelId = novelId,
-                        Name = item.Name.Trim(),
-                        Gender = item.Gender,
-                        Personality = item.Personality,
-                        Description = item.Description
-                    });
-                }
+                    NovelId = novelId,
+                    Name = item.Name.Trim(),
+                    Gender = item.Gender,
+                    Personality = item.Personality,
+                    Description = item.Description
+                };
+
+                characterMap[normalizedName] = character;
+                newCharacters.Add(character);
             }
 
-            await db.SaveChangesAsync(cancellationToken);
-
-            foreach (var item in result.Scripts.Where(x => !string.IsNullOrWhiteSpace(x.Text)))
+            if (newCharacters.Count > 0)
             {
-                var character = await db.Characters.FirstOrDefaultAsync(
-                    x => x.NovelId == novelId && x.Name == item.Speaker,
-                    cancellationToken);
+                db.Characters.AddRange(newCharacters);
+                // 这里保存一次是为了获得新增人物 Id，后面的 ScriptLine 可直接引用。
+                await db.SaveChangesAsync(cancellationToken);
+            }
 
-                db.ScriptLines.Add(new ScriptLine
+            // 脚本完全在内存中映射 CharacterId，不再每条 FirstOrDefaultAsync。
+            var scriptEntities = new List<ScriptLine>(result.Scripts.Count);
+            foreach (var item in result.Scripts)
+            {
+                if (string.IsNullOrWhiteSpace(item.Text))
+                    continue;
+
+                var speaker = string.IsNullOrWhiteSpace(item.Speaker)
+                    ? "旁白"
+                    : item.Speaker.Trim();
+
+                characterMap.TryGetValue(NormalizeName(speaker), out var character);
+
+                scriptEntities.Add(new ScriptLine
                 {
                     NovelId = novelId,
                     CharacterId = character?.Id,
                     Order = ++scriptOrder,
-                    Speaker = string.IsNullOrWhiteSpace(item.Speaker) ? "旁白" : item.Speaker,
+                    Speaker = speaker,
                     Text = item.Text.Trim(),
-                    Emotion = item.Emotion
+                    Emotion = item.Emotion?.Trim()
                 });
             }
+
+            if (scriptEntities.Count > 0)
+                db.ScriptLines.AddRange(scriptEntities);
 
             job.Checkpoint = index + 1;
             job.Progress = (int)Math.Round(job.Checkpoint * 100d / Math.Max(chunks.Count, 1));
             JobTimingCalculator.Refresh(job);
+
+            // 每个分块最多两次 SaveChanges：一次新增人物取 Id，一次批量写脚本/任务进度。
             await db.SaveChangesAsync(cancellationToken);
         }
 
@@ -104,11 +159,48 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    private static IEnumerable<string> Split(string text, int chunkSize)
+    private static IEnumerable<string> SplitByParagraph(string text, int chunkSize)
     {
-        for (var i = 0; i < text.Length; i += chunkSize)
-            yield return text.Substring(i, Math.Min(chunkSize, text.Length - i));
+        if (string.IsNullOrWhiteSpace(text))
+            yield break;
+
+        var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
+        var paragraphs = normalized.Split('\n');
+        var buffer = new System.Text.StringBuilder(chunkSize + 512);
+
+        foreach (var paragraph in paragraphs)
+        {
+            if (paragraph.Length > chunkSize)
+            {
+                if (buffer.Length > 0)
+                {
+                    yield return buffer.ToString();
+                    buffer.Clear();
+                }
+
+                for (var offset = 0; offset < paragraph.Length; offset += chunkSize)
+                    yield return paragraph.Substring(offset, Math.Min(chunkSize, paragraph.Length - offset));
+                continue;
+            }
+
+            if (buffer.Length > 0 && buffer.Length + paragraph.Length + 1 > chunkSize)
+            {
+                yield return buffer.ToString();
+                buffer.Clear();
+            }
+
+            if (buffer.Length > 0)
+                buffer.Append('\n');
+
+            buffer.Append(paragraph);
+        }
+
+        if (buffer.Length > 0)
+            yield return buffer.ToString();
     }
+
+    private static string NormalizeName(string? name)
+        => string.IsNullOrWhiteSpace(name) ? string.Empty : name.Trim();
 
     private static string NormalizeJson(string value)
     {
