@@ -14,6 +14,7 @@ async function saveChar(c:any){await api.put('/characters/'+c.id,c);}
 async function saveSettings(){await api.put('/settings',settings.value);await load();}
 async function learn(n:any){await api.post('/writing/learn/'+n.id);await load();tab.value='writing';}
 async function generate(){await api.post('/writing/generate',gen.value);await load();}
+async function publishGenerated(row:any){await api.post('/writing/generated/'+row.id+'/publish');await load();tab.value='novels';}
 </script>
 <template>
 <div class="layout">
