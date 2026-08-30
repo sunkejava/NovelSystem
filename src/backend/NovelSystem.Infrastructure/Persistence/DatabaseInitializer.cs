@@ -20,6 +20,8 @@ public static class DatabaseInitializer
             ["AiModel"] = "local-model",
             ["AiTimeoutSeconds"] = "120",
             ["AiChunkSize"] = "12000",
+            ["AiCachePrompt"] = "true",
+            ["AiAnalysisMaxTokens"] = "16384",
             ["TtsBaseUrl"] = "http://127.0.0.1:8000",
             ["TtsUploadEndpoint"] = "/gradio_api/upload",
             ["TtsVoiceCloneSubmitEndpoint"] = "/gradio_api/call/v2/run_voice_clone",
