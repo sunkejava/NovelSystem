@@ -8,7 +8,7 @@ namespace NovelSystem.Infrastructure.AI;
 
 /// <summary>
 /// llama.cpp OpenAI-compatible Chat Completions 客户端。
-/// 对重复系统提示启用 Prompt/KV Cache，减少长小说分块解析时的重复 Prefill。
+/// 默认关闭 Qwen thinking，并复用 HTTP 连接和 prompt cache，以贴近 llama.cpp WebUI 的快速解析行为。
 /// </summary>
 public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, AppDbContext db) : IAiChatClient
 {
@@ -38,44 +38,63 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
             ? Math.Clamp(timeout, 10, 3600)
             : 120;
 
-        var maxTokens = int.TryParse(settings.Get("AiAnalysisMaxTokens", "16384"), out var configuredMaxTokens)
+        var maxTokens = int.TryParse(settings.Get("AiAnalysisMaxTokens", "8192"), out var configuredMaxTokens)
             ? Math.Clamp(configuredMaxTokens, 512, 65536)
-            : 16384;
+            : 8192;
 
         var cachePrompt = !bool.TryParse(settings.Get("AiCachePrompt", "true"), out var configuredCache)
                           || configuredCache;
 
-        using var client = httpClientFactory.CreateClient();
+        var enableThinking = bool.TryParse(settings.Get("AiEnableThinking", "false"), out var thinking)
+                             && thinking;
+
+        var useJsonResponseFormat = bool.TryParse(
+                                        settings.Get("AiUseJsonResponseFormat", "false"),
+                                        out var jsonFormat)
+                                    && jsonFormat;
+
+        var client = httpClientFactory.CreateClient("llama.cpp");
         client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
-        object payload = jsonMode
-            ? new
+        // Qwen 系列在未显式关闭 thinking 时可能先产生大量推理 token。
+        // chat_template_kwargs 与 llama.cpp WebUI 的 enable_thinking 开关保持一致。
+        var common = new
+        {
+            model,
+            messages = new[]
             {
-                model,
-                messages = new[]
-                {
-                    new { role = "system", content = systemPrompt },
-                    new { role = "user", content = userPrompt }
-                },
-                temperature = 0.1,
-                max_tokens = maxTokens,
-                stream = false,
-                cache_prompt = cachePrompt,
-                response_format = new { type = "json_object" }
+                new { role = "system", content = systemPrompt },
+                new { role = "user", content = userPrompt }
+            },
+            temperature = jsonMode ? 0.0 : 0.25,
+            max_tokens = maxTokens,
+            stream = false,
+            cache_prompt = cachePrompt,
+            chat_template_kwargs = new
+            {
+                enable_thinking = enableThinking
             }
-            : new
+        };
+
+        object payload;
+        if (jsonMode && useJsonResponseFormat)
+        {
+            payload = new
             {
-                model,
-                messages = new[]
-                {
-                    new { role = "system", content = systemPrompt },
-                    new { role = "user", content = userPrompt }
-                },
-                temperature = 0.25,
-                max_tokens = maxTokens,
-                stream = false,
-                cache_prompt = cachePrompt
+                common.model,
+                common.messages,
+                common.temperature,
+                common.max_tokens,
+                common.stream,
+                common.cache_prompt,
+                common.chat_template_kwargs,
+                response_format = new { type = "json_object" }
             };
+        }
+        else
+        {
+            payload = common;
+        }
 
         using var response = await client.PostAsJsonAsync(
             $"{baseUrl}/chat/completions",

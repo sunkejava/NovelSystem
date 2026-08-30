@@ -14,6 +14,7 @@ const query=ref({page:1,pageSize:20,keyword:'',type:'',status:''});
 const errorVisible=ref(false);
 const currentError=ref('');
 const now=ref(Date.now());
+const lastLoadedAt=ref(Date.now());
 let timer:number|undefined;
 let clockTimer:number|undefined;
 
@@ -25,6 +26,7 @@ async function load(){
   jobs.value=result.items;
   total.value=result.total;
   summary.value=result.summary||{};
+  lastLoadedAt.value=Date.now();
 }
 function search(){query.value.page=1;load();}
 function reset(){query.value={page:1,pageSize:20,keyword:'',type:'',status:''};load();}
@@ -36,7 +38,11 @@ async function remove(row:any){await ElMessageBox.confirm('确认删除任务 #'
 function showError(row:any){currentError.value=row.error||'未记录异常信息';errorVisible.value=true;}
 function formatTime(value?:string){if(!value)return '—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString();}
 function formatDuration(ms?:number){if(!ms||ms<=0)return '—';const s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),sec=s%60;if(d)return d+'天 '+h+'小时 '+m+'分';if(h)return h+'小时 '+m+'分 '+sec+'秒';if(m)return m+'分 '+sec+'秒';return sec+'秒';}
-function liveElapsed(row:any){if(!row.startedAt)return row.elapsedMilliseconds||0;if(['Completed','Failed','Stopped'].includes(row.status))return row.elapsedMilliseconds||0;return Math.max(row.elapsedMilliseconds||0,now.value-new Date(row.startedAt).getTime());}
+function liveElapsed(row:any){
+  const serverElapsed=row.elapsedMilliseconds||0;
+  if(!['Running','Stopping'].includes(row.status)) return serverElapsed;
+  return serverElapsed+Math.max(0,now.value-lastLoadedAt.value);
+}
 function remaining(row:any){if(!row.estimatedCompletionAt||!['Running','Queued','Stopping'].includes(row.status))return '—';const diff=new Date(row.estimatedCompletionAt).getTime()-now.value;return diff<=0?'即将完成':formatDuration(diff);}
 
 onMounted(async()=>{await load();timer=window.setInterval(load,2500);clockTimer=window.setInterval(()=>now.value=Date.now(),1000);});

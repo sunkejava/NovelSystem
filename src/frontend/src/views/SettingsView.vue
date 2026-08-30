@@ -192,6 +192,18 @@ onMounted(load);
               <el-option label="禁用" value="false"/>
             </el-select>
           </el-form-item>
+          <el-form-item label="Qwen Thinking / Reasoning">
+            <el-select v-model="form.AiEnableThinking" class="full-width">
+              <el-option label="关闭（解析推荐，速度更快）" value="false"/>
+              <el-option label="开启" value="true"/>
+            </el-select>
+          </el-form-item>
+          <el-form-item label="JSON 约束解码">
+            <el-select v-model="form.AiUseJsonResponseFormat" class="full-width">
+              <el-option label="关闭（速度优先）" value="false"/>
+              <el-option label="开启（格式优先）" value="true"/>
+            </el-select>
+          </el-form-item>
         </div>
       </el-form>
       <div class="model-test-row">

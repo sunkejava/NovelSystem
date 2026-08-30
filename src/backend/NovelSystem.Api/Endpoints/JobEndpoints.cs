@@ -37,11 +37,31 @@ public static class JobEndpoints
             }
 
             var total = await query.CountAsync();
-            var items = await query
+            var rawItems = await query
                 .OrderByDescending(x => x.Id)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync();
+
+            var items = rawItems.Select(x => new
+            {
+                x.Id,
+                x.Type,
+                x.Status,
+                x.Progress,
+                x.Checkpoint,
+                x.TotalSteps,
+                x.RetryCount,
+                x.Payload,
+                x.Result,
+                x.Error,
+                createdAt = JobTimingCalculator.ToUtcIso(x.CreatedAt),
+                startedAt = JobTimingCalculator.ToUtcIso(x.StartedAt),
+                finishedAt = JobTimingCalculator.ToUtcIso(x.FinishedAt),
+                x.ElapsedMilliseconds,
+                x.AverageStepMilliseconds,
+                estimatedCompletionAt = JobTimingCalculator.ToUtcIso(x.EstimatedCompletionAt)
+            }).ToList();
 
             var summary = new
             {

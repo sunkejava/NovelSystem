@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NovelSystem.Application.Contracts;
-using NovelSystem.Application.Models;
 using NovelSystem.Domain.Entities;
 using NovelSystem.Infrastructure.Persistence;
 using NovelSystem.Infrastructure.Jobs;
@@ -10,26 +9,25 @@ namespace NovelSystem.Infrastructure.Services;
 
 /// <summary>
 /// 长小说人物/脚本解析服务。
-/// 优化重点：LLM 分块调用 + Prompt Cache + 人物一次加载 + 脚本批量映射/写入，
-/// 避免原实现每个人物/每条脚本一次数据库查询造成的 N+1 性能问题。
+/// 采用紧凑 JSON、批量数据库写入、Prompt Cache 和显式进度持久化，
+/// 尽量降低模型输出 token 与 SQLite 往返开销。
 /// </summary>
 public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient) : INovelAnalysisService
 {
     private const string AnalysisSystemPrompt =
-        "你是专业中文小说结构分析器。任务是提取人物与可用于多角色TTS的脚本。必须只输出合法JSON，不要解释。";
+        "你是中文小说人物与TTS脚本提取器。只输出JSON，不思考、不解释、不使用Markdown。";
 
+    // 使用数组而不是每条记录重复 JSON 属性名，大幅减少长文本解析时的输出 token。
     private const string AnalysisInstruction =
         """
-        按原文顺序提取人物与TTS脚本。
-        要求：
-        1. characters 只列本片段真实出现的重要人物；不要把“旁白”当人物。
-        2. scripts 必须覆盖需要朗读的正文；人物对白 speaker=人物名，叙述内容 speaker=旁白。
-        3. text 保留原文语义，不增加解释，不重复。
-        4. emotion 使用简短中文情绪词，没有明显情绪可留空。
-        输出JSON：
-        {"characters":[{"name":"","gender":"","personality":"","description":""}],"scripts":[{"speaker":"人物名或旁白","text":"","emotion":""}]}
+        按原文顺序提取。
+        c=人物数组，每项格式：[姓名,性别,性格,简介]；旁白不放入c。
+        s=TTS脚本数组，每项格式：[说话人,原文朗读文本,情绪]；叙述内容说话人固定为“旁白”。
+        必须覆盖需要朗读的正文，不改写、不总结、不重复。
+        情绪无明显特征时填空字符串。
+        仅输出：{"c":[["","","",""]],"s":[["","",""]]}
 
-        小说片段：
+        原文：
         """;
 
     public async Task AnalyzeAsync(long novelId, long jobId, CancellationToken cancellationToken = default)
@@ -42,27 +40,30 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
         var chunkText = await db.Settings
             .Where(x => x.Key == "AiChunkSize")
             .Select(x => x.Value)
-            .FirstOrDefaultAsync(cancellationToken) ?? "12000";
+            .FirstOrDefaultAsync(cancellationToken) ?? "8000";
 
         var chunkSize = int.TryParse(chunkText, out var configured)
             ? Math.Clamp(configured, 1000, 100000)
-            : 12000;
+            : 8000;
 
         novel.Status = NovelStatus.Analyzing;
         await db.SaveChangesAsync(cancellationToken);
 
-        // 尽量按段落边界切块，避免硬切在一句对白中间，减少模型重复理解上下文。
         var chunks = SplitByParagraph(novel.Content, chunkSize).ToList();
-        job.TotalSteps = chunks.Count;
-
         var startIndex = Math.Clamp(job.Checkpoint, 0, chunks.Count);
+
+        job.TotalSteps = chunks.Count;
+        job.Progress = chunks.Count == 0
+            ? 0
+            : (int)Math.Round(startIndex * 100d / chunks.Count);
+        JobTimingCalculator.Refresh(job);
+        await db.SaveChangesAsync(cancellationToken);
 
         var scriptOrder = await db.ScriptLines
             .Where(x => x.NovelId == novelId)
             .MaxAsync(x => (int?)x.Order, cancellationToken)
             ?? 0;
 
-        // 一次性加载现有人物，后续所有分块在内存字典中判断/映射。
         var existingCharacters = await db.Characters
             .Where(x => x.NovelId == novelId)
             .ToListAsync(cancellationToken);
@@ -73,8 +74,13 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
 
         for (var index = startIndex; index < chunks.Count; index++)
         {
-            await db.Entry(job).ReloadAsync(cancellationToken);
-            if (job.Status == "Stopping")
+            // 直接从数据库读取任务状态，避免长时间 LLM 调用期间使用陈旧跟踪值。
+            var currentStatus = await db.Jobs.AsNoTracking()
+                .Where(x => x.Id == jobId)
+                .Select(x => x.Status)
+                .SingleAsync(cancellationToken);
+
+            if (currentStatus == "Stopping")
                 throw new OperationCanceledException("任务已由用户停止。");
 
             var raw = await aiClient.ChatJsonAsync(
@@ -82,14 +88,10 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                 AnalysisInstruction + chunks[index],
                 cancellationToken);
 
-            var result = JsonSerializer.Deserialize<AiAnalysisResult>(
-                NormalizeJson(raw),
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-                ?? new AiAnalysisResult();
+            var parsed = ParseCompactResult(raw);
 
-            // 先在内存里计算本块新增人物，单次 AddRange + SaveChanges。
             var newCharacters = new List<Character>();
-            foreach (var item in result.Characters)
+            foreach (var item in parsed.Characters)
             {
                 var normalizedName = NormalizeName(item.Name);
                 if (string.IsNullOrWhiteSpace(normalizedName) ||
@@ -113,21 +115,16 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
             if (newCharacters.Count > 0)
             {
                 db.Characters.AddRange(newCharacters);
-                // 这里保存一次是为了获得新增人物 Id，后面的 ScriptLine 可直接引用。
                 await db.SaveChangesAsync(cancellationToken);
             }
 
-            // 脚本完全在内存中映射 CharacterId，不再每条 FirstOrDefaultAsync。
-            var scriptEntities = new List<ScriptLine>(result.Scripts.Count);
-            foreach (var item in result.Scripts)
+            var scriptEntities = new List<ScriptLine>(parsed.Scripts.Count);
+            foreach (var item in parsed.Scripts)
             {
                 if (string.IsNullOrWhiteSpace(item.Text))
                     continue;
 
-                var speaker = string.IsNullOrWhiteSpace(item.Speaker)
-                    ? "旁白"
-                    : item.Speaker.Trim();
-
+                var speaker = string.IsNullOrWhiteSpace(item.Speaker) ? "旁白" : item.Speaker.Trim();
                 characterMap.TryGetValue(NormalizeName(speaker), out var character);
 
                 scriptEntities.Add(new ScriptLine
@@ -144,20 +141,104 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
             if (scriptEntities.Count > 0)
                 db.ScriptLines.AddRange(scriptEntities);
 
+            // 先保存本块人物/脚本，再用独立 SQL 更新任务进度。
+            await db.SaveChangesAsync(cancellationToken);
+
             job.Checkpoint = index + 1;
             job.Progress = (int)Math.Round(job.Checkpoint * 100d / Math.Max(chunks.Count, 1));
             JobTimingCalculator.Refresh(job);
 
-            // 每个分块最多两次 SaveChanges：一次新增人物取 Id，一次批量写脚本/任务进度。
-            await db.SaveChangesAsync(cancellationToken);
+            var checkpoint = job.Checkpoint;
+            var progress = job.Progress;
+            var totalSteps = job.TotalSteps;
+            var elapsed = job.ElapsedMilliseconds;
+            var average = job.AverageStepMilliseconds;
+            var eta = job.EstimatedCompletionAt;
+
+            await db.Jobs
+                .Where(x => x.Id == jobId)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Checkpoint, checkpoint)
+                    .SetProperty(x => x.Progress, progress)
+                    .SetProperty(x => x.TotalSteps, totalSteps)
+                    .SetProperty(x => x.ElapsedMilliseconds, elapsed)
+                    .SetProperty(x => x.AverageStepMilliseconds, average)
+                    .SetProperty(x => x.EstimatedCompletionAt, eta),
+                    cancellationToken);
+
+            // ExecuteUpdate 不更新已跟踪实体的 OriginalValues，这里同步标记避免后续 SaveChanges 覆盖数据库进度。
+            db.Entry(job).State = EntityState.Unchanged;
         }
 
         novel.Status = NovelStatus.Analyzed;
         job.Progress = 100;
         job.Checkpoint = chunks.Count;
+        job.TotalSteps = chunks.Count;
         JobTimingCalculator.Refresh(job);
+
+        await db.Jobs
+            .Where(x => x.Id == jobId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.Checkpoint, job.Checkpoint)
+                .SetProperty(x => x.Progress, 100)
+                .SetProperty(x => x.TotalSteps, job.TotalSteps)
+                .SetProperty(x => x.ElapsedMilliseconds, job.ElapsedMilliseconds)
+                .SetProperty(x => x.AverageStepMilliseconds, job.AverageStepMilliseconds)
+                .SetProperty(x => x.EstimatedCompletionAt, job.EstimatedCompletionAt),
+                cancellationToken);
+
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    private static CompactAnalysisResult ParseCompactResult(string raw)
+    {
+        var json = NormalizeJson(raw);
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+
+        var result = new CompactAnalysisResult();
+
+        if (root.TryGetProperty("c", out var characters) && characters.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var row in characters.EnumerateArray())
+            {
+                if (row.ValueKind != JsonValueKind.Array) continue;
+                var values = row.EnumerateArray().Select(ReadString).ToList();
+                if (values.Count == 0 || string.IsNullOrWhiteSpace(values[0])) continue;
+
+                result.Characters.Add(new CompactCharacter(
+                    values.ElementAtOrDefault(0) ?? string.Empty,
+                    values.ElementAtOrDefault(1),
+                    values.ElementAtOrDefault(2),
+                    values.ElementAtOrDefault(3)));
+            }
+        }
+
+        if (root.TryGetProperty("s", out var scripts) && scripts.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var row in scripts.EnumerateArray())
+            {
+                if (row.ValueKind != JsonValueKind.Array) continue;
+                var values = row.EnumerateArray().Select(ReadString).ToList();
+                if (values.Count < 2 || string.IsNullOrWhiteSpace(values[1])) continue;
+
+                result.Scripts.Add(new CompactScript(
+                    values.ElementAtOrDefault(0) ?? "旁白",
+                    values.ElementAtOrDefault(1) ?? string.Empty,
+                    values.ElementAtOrDefault(2)));
+            }
+        }
+
+        return result;
+    }
+
+    private static string? ReadString(JsonElement element)
+        => element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Null => null,
+            _ => element.ToString()
+        };
 
     private static IEnumerable<string> SplitByParagraph(string text, int chunkSize)
     {
@@ -209,4 +290,13 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
         var last = text.LastIndexOf('}');
         return first >= 0 && last >= first ? text[first..(last + 1)] : text;
     }
+
+    private sealed class CompactAnalysisResult
+    {
+        public List<CompactCharacter> Characters { get; } = [];
+        public List<CompactScript> Scripts { get; } = [];
+    }
+
+    private sealed record CompactCharacter(string Name, string? Gender, string? Personality, string? Description);
+    private sealed record CompactScript(string Speaker, string Text, string? Emotion);
 }
