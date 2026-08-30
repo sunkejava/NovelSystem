@@ -1,0 +1,8 @@
+<script setup lang="ts">
+import {onMounted,onUnmounted,ref} from 'vue';import {jobApi} from '../api/jobs';import PageHeader from '../components/PageHeader.vue';import StatusBadge from '../components/StatusBadge.vue';
+const jobs=ref<any[]>([]);let timer:number|undefined;
+async function load(){jobs.value=await jobApi.list();}
+onMounted(async()=>{await load();timer=window.setInterval(load,3000)});onUnmounted(()=>timer&&clearInterval(timer));
+</script>
+<template><div><PageHeader eyebrow="AI PIPELINE" title="任务中枢" description="持续观察小说解析、TTS 生成与媒体合并任务的实时状态。"><el-button class="ghost-button" @click="load">立即刷新</el-button></PageHeader>
+<section class="glass-panel content-card"><el-table :data="jobs" class="cyber-table"><el-table-column prop="id" label="ID" width="80"/><el-table-column prop="type" label="任务类型" width="180"/><el-table-column label="状态" width="130"><template #default="{row}"><StatusBadge :status="row.status"/></template></el-table-column><el-table-column label="执行进度" min-width="240"><template #default="{row}"><div class="progress-cell"><el-progress :percentage="row.progress" :stroke-width="6"/><span>{{row.progress}}%</span></div></template></el-table-column><el-table-column prop="createdAt" label="创建时间" width="210"/><el-table-column label="产物" width="140"><template #default="{row}"><el-link v-if="row.type==='GenerateAudio'&&row.status==='Completed'" :href="jobApi.downloadUrl(row.id)" type="primary">下载 MP3</el-link><span v-else>—</span></template></el-table-column></el-table></section></div></template>

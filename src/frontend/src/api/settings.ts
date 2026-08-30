@@ -1,0 +1,2 @@
+import {http} from './http';
+export const settingApi={get:()=>http.get('/settings/').then(r=>r.data),save:(payload:Record<string,string>)=>http.put('/settings/',payload),voices:()=>http.get('/settings/voices').then(r=>r.data)};
