@@ -907,3 +907,20 @@ html[data-theme="light"] .list-pager .el-pagination.is-background .el-pager li.i
   .page-fill{height:auto;overflow:visible}
   .settings-page .settings-shell{min-height:640px}
 }
+
+
+/* =========================
+   Voice profile dialog
+   ========================= */
+.voice-list-head{align-items:center}
+.voice-head-actions{display:flex;align-items:center;gap:12px}
+.voice-head-actions>span{font-size:10px;color:var(--muted);letter-spacing:1.2px}
+.voice-create-dialog .el-dialog__body{padding-top:8px}
+.voice-create-tabs .el-tabs__header{margin-bottom:16px}
+.voice-dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:8px;padding-top:14px;border-top:1px solid var(--line)}
+.voice-create-dialog .voice-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:760px){
+  .voice-create-dialog{width:94%!important}
+  .voice-create-dialog .voice-form-grid{grid-template-columns:1fr}
+  .voice-head-actions{gap:8px}
+}

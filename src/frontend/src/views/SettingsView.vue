@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed,onMounted,ref} from 'vue';
 import {ElMessage,ElMessageBox} from 'element-plus';
-import {Search} from '@element-plus/icons-vue';
+import {Search,Plus} from '@element-plus/icons-vue';
 import {settingApi} from '../api/settings';
 import {voiceApi} from '../api/voices';
 import {useTheme,type ThemeMode} from '../composables/useTheme';
@@ -16,6 +16,8 @@ const profiles=ref<any[]>([]);
 const voiceTotal=ref(0);
 const voiceQuery=ref({page:1,pageSize:12,keyword:'',language:'',status:''});
 const editingId=ref<number|null>(null);
+const voiceDialogVisible=ref(false);
+const voiceDialogTab=ref<'single'|'batch'>('single');
 const savingVoice=ref(false);
 const batchCreating=ref(false);
 const testingAi=ref(false);
@@ -49,14 +51,39 @@ async function testAi(){testingAi.value=true;try{await settingApi.save(form.valu
 async function testTts(){testingTts.value=true;try{await settingApi.save(form.value);ttsTest.value=await settingApi.testTts();ttsTest.value.online?ElMessage.success('Qwen3-TTS 服务在线，响应 '+ttsTest.value.latencyMs+' ms'):ElMessage.error('Qwen3-TTS 连接失败：'+(ttsTest.value.error||'未知错误'));}finally{testingTts.value=false;}}
 async function testFfmpeg(){testingFfmpeg.value=true;try{await settingApi.save(form.value);ffmpegTest.value=await settingApi.testFfmpeg();ffmpegTest.value.online?ElMessage.success('FFmpeg 可用：'+ffmpegTest.value.version):ElMessage.error('FFmpeg 检测失败：'+(ffmpegTest.value.error||'未知错误'));}finally{testingFfmpeg.value=false;}}
 function resetVoice(){editingId.value=null;voiceForm.value={name:'',referenceAudioFile:'',referenceText:'',useXVector:false,language:'Chinese'};}
-function editVoice(row:any){editingId.value=row.id;voiceForm.value={name:row.name,referenceAudioFile:row.referenceAudioFile,referenceText:row.referenceText,useXVector:row.useXVector,language:row.language||'Chinese'};}
+function openVoiceCreate(){
+  resetVoice();
+  voiceDialogTab.value='single';
+  voiceDialogVisible.value=true;
+}
+function editVoice(row:any){
+  editingId.value=row.id;
+  voiceForm.value={name:row.name,referenceAudioFile:row.referenceAudioFile,referenceText:row.referenceText,useXVector:row.useXVector,language:row.language||'Chinese'};
+  voiceDialogTab.value='single';
+  voiceDialogVisible.value=true;
+}
 async function saveVoice(){
   if(!voiceForm.value.name||!voiceForm.value.referenceAudioFile){ElMessage.warning('请填写音色名称并选择参考 WAV');return;}
   if(!voiceForm.value.useXVector&&!voiceForm.value.referenceText.trim()){ElMessage.warning('未启用 x-vector 时必须填写参考音频文本');return;}
   savingVoice.value=true;
-  try{editingId.value?await voiceApi.update(editingId.value,voiceForm.value):await voiceApi.create(voiceForm.value);ElMessage.success(isEditing.value?'音色档案已更新':'音色档案已创建');resetVoice();await loadVoices();}finally{savingVoice.value=false;}
+  try{
+    editingId.value?await voiceApi.update(editingId.value,voiceForm.value):await voiceApi.create(voiceForm.value);
+    ElMessage.success(isEditing.value?'音色档案已更新':'音色档案已创建');
+    voiceDialogVisible.value=false;
+    resetVoice();
+    await loadVoices();
+  }finally{savingVoice.value=false;}
 }
-async function batchCreateVoices(){batchCreating.value=true;try{const r=await voiceApi.batchCreate(batchVoiceForm.value);ElMessage.success('扫描 '+r.scanned+' 个 WAV，新建 '+r.created+' 个，跳过 '+r.skipped+' 个');if(r.promptErrors?.length)ElMessage.warning('其中 '+r.promptErrors.length+' 个 Prompt 生成失败');await loadVoices();}finally{batchCreating.value=false;}}
+async function batchCreateVoices(){
+  batchCreating.value=true;
+  try{
+    const r=await voiceApi.batchCreate(batchVoiceForm.value);
+    ElMessage.success('扫描 '+r.scanned+' 个 WAV，新建 '+r.created+' 个，跳过 '+r.skipped+' 个');
+    if(r.promptErrors?.length)ElMessage.warning('其中 '+r.promptErrors.length+' 个 Prompt 生成失败');
+    voiceDialogVisible.value=false;
+    await loadVoices();
+  }finally{batchCreating.value=false;}
+}
 async function buildPrompt(row:any){ElMessage.info('正在调用 Qwen3-TTS 生成 Prompt...');await voiceApi.buildPrompt(row.id);ElMessage.success('Prompt 缓存生成完成');await loadVoices();}
 async function removeVoice(row:any){await ElMessageBox.confirm('确认删除音色“'+row.name+'”？','删除音色',{type:'warning'});await voiceApi.remove(row.id);ElMessage.success('音色已删除');await loadVoices();}
 onMounted(load);
@@ -135,14 +162,11 @@ onMounted(load);
 
       <el-tab-pane label="音色档案" name="voices">
         <div class="settings-tab-scroll voice-tab">
-          <div class="card-head"><div><span class="eyebrow">VOICE PROFILES</span><h3>Qwen3-TTS 音色档案</h3></div><span>{{voiceTotal}} PROFILES</span></div>
-          <div class="voice-tools-grid">
-            <div class="batch-voice-panel">
-              <div class="section-title compact"><span>批</span><div><h3>从本地 WAV 批量建档</h3></div></div>
-              <el-form label-position="top"><div class="voice-form-grid"><el-form-item label="默认语言"><el-select v-model="batchVoiceForm.language" class="full-width"><el-option v-for="lang in languages" :key="lang" :label="lang" :value="lang"/></el-select></el-form-item><el-form-item label="仅使用 x-vector"><el-switch v-model="batchVoiceForm.useXVector"/></el-form-item><el-form-item label="跳过已存在档案"><el-switch v-model="batchVoiceForm.skipExisting"/></el-form-item><el-form-item label="建档后生成 Prompt"><el-switch v-model="batchVoiceForm.buildPrompt"/></el-form-item></div><el-form-item label="统一参考文本"><el-input v-model="batchVoiceForm.referenceText" type="textarea" :rows="2"/></el-form-item><div class="voice-editor-actions"><el-button class="neon-button" :loading="batchCreating" @click="batchCreateVoices">扫描目录并批量建档</el-button></div></el-form>
-            </div>
-            <div class="voice-editor">
-              <el-form label-position="top"><div class="voice-form-grid"><el-form-item label="音色名称"><el-input v-model="voiceForm.name"/></el-form-item><el-form-item label="参考 WAV"><el-select v-model="voiceForm.referenceAudioFile" filterable class="full-width"><el-option v-for="wav in wavFiles" :key="wav.path" :label="wav.name" :value="wav.path"/></el-select></el-form-item><el-form-item label="语言"><el-select v-model="voiceForm.language" class="full-width"><el-option v-for="lang in languages" :key="lang" :label="lang" :value="lang"/></el-select></el-form-item><el-form-item label="仅使用 x-vector"><el-switch v-model="voiceForm.useXVector"/></el-form-item></div><el-form-item label="参考音频对应文本"><el-input v-model="voiceForm.referenceText" type="textarea" :rows="2"/></el-form-item><div class="voice-editor-actions"><el-button v-if="isEditing" class="ghost-button" @click="resetVoice">取消编辑</el-button><el-button class="neon-button" :loading="savingVoice" @click="saveVoice">{{isEditing?'保存音色':'新增音色档案'}}</el-button></div></el-form>
+          <div class="card-head voice-list-head">
+            <div><span class="eyebrow">VOICE PROFILES</span><h3>Qwen3-TTS 音色档案</h3></div>
+            <div class="voice-head-actions">
+              <span>{{voiceTotal}} PROFILES</span>
+              <el-button class="neon-button" @click="openVoiceCreate"><el-icon><Plus/></el-icon>新增音色</el-button>
             </div>
           </div>
 
@@ -163,5 +187,55 @@ onMounted(load);
       </el-tab-pane>
     </el-tabs>
   </section>
+  <el-dialog
+    v-model="voiceDialogVisible"
+    :title="isEditing?'编辑音色档案':'新增音色档案'"
+    width="760px"
+    class="theme-dialog voice-create-dialog"
+    destroy-on-close
+  >
+    <el-tabs v-model="voiceDialogTab" class="voice-create-tabs">
+      <el-tab-pane label="单个新增" name="single">
+        <el-form label-position="top">
+          <div class="voice-form-grid">
+            <el-form-item label="音色名称"><el-input v-model="voiceForm.name" placeholder="例如：温柔女声"/></el-form-item>
+            <el-form-item label="参考 WAV">
+              <el-select v-model="voiceForm.referenceAudioFile" filterable class="full-width" placeholder="从音色目录选择">
+                <el-option v-for="wav in wavFiles" :key="wav.path" :label="wav.name" :value="wav.path"/>
+              </el-select>
+            </el-form-item>
+            <el-form-item label="语言"><el-select v-model="voiceForm.language" class="full-width"><el-option v-for="lang in languages" :key="lang" :label="lang" :value="lang"/></el-select></el-form-item>
+            <el-form-item label="仅使用 x-vector"><el-switch v-model="voiceForm.useXVector"/></el-form-item>
+          </div>
+          <el-form-item label="参考音频对应文本">
+            <el-input v-model="voiceForm.referenceText" type="textarea" :rows="4" placeholder="未启用 x-vector 时必须与参考 WAV 中实际说话内容一致"/>
+          </el-form-item>
+        </el-form>
+        <div class="voice-dialog-actions">
+          <el-button class="ghost-button" @click="voiceDialogVisible=false">取消</el-button>
+          <el-button class="neon-button" :loading="savingVoice" @click="saveVoice">{{isEditing?'保存修改':'创建音色'}}</el-button>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane v-if="!isEditing" label="批量新增" name="batch">
+        <el-form label-position="top">
+          <div class="voice-form-grid">
+            <el-form-item label="默认语言"><el-select v-model="batchVoiceForm.language" class="full-width"><el-option v-for="lang in languages" :key="lang" :label="lang" :value="lang"/></el-select></el-form-item>
+            <el-form-item label="仅使用 x-vector"><el-switch v-model="batchVoiceForm.useXVector"/></el-form-item>
+            <el-form-item label="跳过已存在档案"><el-switch v-model="batchVoiceForm.skipExisting"/></el-form-item>
+            <el-form-item label="建档后生成 Prompt"><el-switch v-model="batchVoiceForm.buildPrompt"/></el-form-item>
+          </div>
+          <el-form-item label="统一参考文本">
+            <el-input v-model="batchVoiceForm.referenceText" type="textarea" :rows="4" placeholder="未启用 x-vector 时填写；批量扫描当前配置的 WAV 音色目录"/>
+          </el-form-item>
+        </el-form>
+        <div class="voice-dialog-actions">
+          <el-button class="ghost-button" @click="voiceDialogVisible=false">取消</el-button>
+          <el-button class="neon-button" :loading="batchCreating" @click="batchCreateVoices">扫描目录并批量建档</el-button>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
+  </el-dialog>
+
 </div>
 </template>
