@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const props=defineProps<{page:number;pageSize:number;total:number}>();
+defineProps<{page:number;pageSize:number;total:number}>();
 const emit=defineEmits<{(e:'update:page',value:number):void;(e:'update:pageSize',value:number):void;(e:'change'):void}>();
 
 function pageChange(value:number){emit('update:page',value);emit('change');}
@@ -7,7 +7,7 @@ function sizeChange(value:number){emit('update:pageSize',value);emit('update:pag
 </script>
 <template>
   <div class="list-pager" v-if="total>0">
-    <span>共 {{total}} 条</span>
+    <span>共 {{total}} 条记录</span>
     <el-pagination
       background
       layout="sizes, prev, pager, next, jumper"
@@ -15,6 +15,8 @@ function sizeChange(value:number){emit('update:pageSize',value);emit('update:pag
       :page-size="pageSize"
       :page-sizes="[10,20,50,100]"
       :total="total"
+      :teleported="true"
+      popper-class="pager-size-popper"
       @current-change="pageChange"
       @size-change="sizeChange"
     />

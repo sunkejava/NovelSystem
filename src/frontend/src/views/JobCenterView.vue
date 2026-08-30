@@ -50,7 +50,7 @@ onUnmounted(()=>{if(timer)clearInterval(timer);if(clockTimer)clearInterval(clock
 </script>
 
 <template>
-<div>
+<div class="page-fill job-page">
   <PageHeader eyebrow="AI PIPELINE" title="任务中枢" description="分页检索任务，实时查看进度、耗时、ETA、失败原因及断点状态。">
     <el-button class="ghost-button" @click="load"><el-icon><Refresh/></el-icon>刷新</el-button>
   </PageHeader>
@@ -61,7 +61,7 @@ onUnmounted(()=>{if(timer)clearInterval(timer);if(clockTimer)clearInterval(clock
     <div class="mini-stat"><span>FAILED</span><b>{{summary.failed||0}}</b></div>
   </div>
 
-  <section class="glass-panel content-card">
+  <section class="glass-panel content-card table-page-card">
     <div class="list-filter-bar">
       <el-input v-model="query.keyword" clearable placeholder="搜索任务类型 / 异常信息" @keyup.enter="search"><template #prefix><el-icon><Search/></el-icon></template></el-input>
       <el-select v-model="query.type" clearable placeholder="全部任务类型"><el-option v-for="item in taskTypes" :key="item" :label="item" :value="item"/></el-select>
@@ -70,7 +70,8 @@ onUnmounted(()=>{if(timer)clearInterval(timer);if(clockTimer)clearInterval(clock
       <el-button class="ghost-button" @click="reset">重置</el-button>
     </div>
 
-    <el-table :data="jobs" class="cyber-table">
+    <div class="table-flex-region">
+    <el-table :data="jobs" class="cyber-table" height="100%">
       <el-table-column prop="id" label="ID" width="72"/>
       <el-table-column prop="type" label="任务类型" width="170"/>
       <el-table-column label="状态" width="120"><template #default="{row}"><StatusBadge :status="row.status"/></template></el-table-column>
@@ -86,6 +87,7 @@ onUnmounted(()=>{if(timer)clearInterval(timer);if(clockTimer)clearInterval(clock
         <el-button v-if="!['Running','Queued','Stopping'].includes(row.status)" text class="action-button danger" @click="remove(row)"><el-icon><Delete/></el-icon>删除</el-button>
       </template></el-table-column>
     </el-table>
+    </div>
     <ListPager v-model:page="query.page" v-model:page-size="query.pageSize" :total="total" @change="load"/>
   </section>
 

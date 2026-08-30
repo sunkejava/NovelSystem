@@ -52,7 +52,7 @@ onUnmounted(()=>audioTimer&&clearInterval(audioTimer));
 </script>
 
 <template>
-<div v-if="detail">
+<div v-if="detail" class="page-fill novel-workspace-page">
   <PageHeader eyebrow="NOVEL WORKSPACE" :title="detail.novel.title" description="人物理解、脚本分页检索、音色绑定、音频资产管理与有声书生产。">
     <el-button class="ghost-button" :loading="working" @click="analyze">AI 重新解析</el-button>
     <el-button class="neon-button" :loading="working" @click="generateAllAudio">生成完整音频</el-button>
@@ -65,7 +65,7 @@ onUnmounted(()=>audioTimer&&clearInterval(audioTimer));
     <div class="mini-stat"><span>AUDIO</span><b>{{audioInfo.completed}} / {{audioInfo.total}}</b></div>
   </div>
 
-  <section class="glass-panel content-card">
+  <section class="glass-panel content-card workspace-main-card">
     <div class="segmented">
       <button :class="{active:activeTab==='characters'}" @click="activeTab='characters'">角色声纹矩阵</button>
       <button :class="{active:activeTab==='scripts'}" @click="activeTab='scripts'">解析脚本流</button>
@@ -84,20 +84,20 @@ onUnmounted(()=>audioTimer&&clearInterval(audioTimer));
       </article>
     </div>
 
-    <div v-else-if="activeTab==='scripts'">
+    <div v-else-if="activeTab==='scripts'" class="workspace-tab-fill">
       <div class="list-filter-bar">
         <el-input v-model="scriptQuery.keyword" clearable placeholder="搜索脚本文本 / 角色 / 情绪" @keyup.enter="searchScripts"><template #prefix><el-icon><Search/></el-icon></template></el-input>
         <el-select v-model="scriptQuery.speaker" clearable filterable placeholder="全部角色"><el-option v-for="s in scriptSpeakers" :key="s" :label="s" :value="s"/></el-select>
         <el-select v-model="scriptQuery.status" clearable placeholder="全部状态"><el-option v-for="s in ['Pending','Generating','Completed','Failed']" :key="s" :label="s" :value="s"/></el-select>
         <el-button class="neon-button" @click="searchScripts">查询</el-button><el-button class="ghost-button" @click="resetScripts">重置</el-button>
       </div>
-      <el-table :data="scripts" height="620" class="cyber-table">
+      <div class="table-flex-region"><el-table :data="scripts" height="100%" class="cyber-table">
         <el-table-column prop="order" label="#" width="70"/><el-table-column prop="speaker" label="角色" width="140"/><el-table-column prop="text" label="脚本文本" min-width="520"/><el-table-column prop="emotion" label="情绪" width="130"/><el-table-column label="状态" width="130"><template #default="{row}"><StatusBadge :status="row.status"/></template></el-table-column>
-      </el-table>
+      </el-table></div>
       <ListPager v-model:page="scriptQuery.page" v-model:page-size="scriptQuery.pageSize" :total="scriptTotal" @change="loadScripts"/>
     </div>
 
-    <div v-else>
+    <div v-else class="workspace-tab-fill">
       <div class="audio-toolbar">
         <div><span class="eyebrow">AUDIO ASSETS</span><h3>{{audioInfo.completed}} / {{audioInfo.total}} 个片段已生成</h3></div>
         <div class="audio-toolbar-actions"><el-button class="ghost-button" @click="loadAudio"><el-icon><RefreshRight/></el-icon>刷新</el-button><el-button class="neon-button" @click="mergeAudio"><el-icon><Connection/></el-icon>合并 MP3</el-button></div>
@@ -113,12 +113,12 @@ onUnmounted(()=>audioTimer&&clearInterval(audioTimer));
         <el-select v-model="audioQuery.status" clearable placeholder="全部状态"><el-option v-for="s in ['Pending','Generating','Completed','Failed']" :key="s" :label="s" :value="s"/></el-select>
         <el-button class="neon-button" @click="searchAudio">查询</el-button><el-button class="ghost-button" @click="resetAudio">重置</el-button>
       </div>
-      <el-table :data="audioInfo.segments" height="620" class="cyber-table audio-table">
+      <div class="table-flex-region"><el-table :data="audioInfo.segments" height="100%" class="cyber-table audio-table">
         <el-table-column prop="order" label="#" width="70"/><el-table-column prop="speaker" label="角色" width="120"/><el-table-column prop="text" label="脚本文本" min-width="330" show-overflow-tooltip/>
         <el-table-column label="状态" width="120"><template #default="{row}"><StatusBadge :status="row.status"/></template></el-table-column>
         <el-table-column label="试听" min-width="250"><template #default="{row}"><audio v-if="row.exists" controls preload="none" class="segment-player" :src="audioApi.segmentPlayUrl(row.id)"></audio><span v-else class="muted-text">尚未生成</span></template></el-table-column>
         <el-table-column label="操作" width="250" fixed="right"><template #default="{row}"><el-button text type="primary" @click="generateSegment(row)">{{row.exists?'重新生成':'生成'}}</el-button><el-link v-if="row.exists" :href="audioApi.segmentDownloadUrl(row.id)" class="audio-download-link"><el-icon><Download/></el-icon>下载</el-link><el-button v-if="row.exists" text type="danger" @click="removeSegment(row)"><el-icon><Delete/></el-icon>删除</el-button></template></el-table-column>
-      </el-table>
+      </el-table></div>
       <ListPager v-model:page="audioQuery.page" v-model:page-size="audioQuery.pageSize" :total="audioInfo.filteredTotal||0" @change="loadAudio"/>
     </div>
   </section>

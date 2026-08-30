@@ -33,7 +33,7 @@ function time(v:string){return v?new Date(v).toLocaleString():'—';}
 onMounted(load);
 </script>
 
-<template><div>
+<template><div class="page-fill token-page">
 <PageHeader eyebrow="LLM TELEMETRY" title="Token 统计中心" description="统计本地 llama.cpp 在人物脚本解析、写法学习、AI 创作等操作中的 Token 消耗与性能。">
   <el-button class="ghost-button" @click="load"><el-icon><Refresh/></el-icon>刷新</el-button>
 </PageHeader>
@@ -47,7 +47,7 @@ onMounted(load);
   <div class="mini-stat"><span>AVG OUTPUT T/S</span><b>{{Number(summary.totals?.averageCompletionTokensPerSecond||0).toFixed(1)}}</b></div>
 </div>
 
-<section class="glass-panel content-card">
+<section class="glass-panel content-card token-summary-card">
   <div class="list-filter-bar">
     <el-input v-model.number="query.novelId" clearable placeholder="小说 ID"/>
     <el-input v-model.number="query.jobId" clearable placeholder="任务 ID"/>
@@ -80,9 +80,10 @@ onMounted(load);
   </div>
 </section>
 
-<section class="glass-panel content-card" style="margin-top:16px">
+<section class="glass-panel content-card table-page-card token-detail-card">
   <div class="card-head"><div><span class="eyebrow">CALL DETAILS</span><h3>单次调用明细</h3></div><span>{{total}} RECORDS</span></div>
-  <el-table :data="rows" class="cyber-table">
+  <div class="table-flex-region">
+  <el-table :data="rows" class="cyber-table" height="100%">
     <el-table-column prop="id" label="ID" width="70"/>
     <el-table-column prop="novelTitle" label="小说" min-width="150"/>
     <el-table-column prop="jobId" label="任务" width="85"/>
@@ -98,6 +99,7 @@ onMounted(load);
     <el-table-column label="状态" width="80"><template #default="{row}"><span :class="row.success?'token-ok':'danger-text'">{{row.success?'成功':'失败'}}</span></template></el-table-column>
     <el-table-column label="时间" width="180"><template #default="{row}">{{time(row.createdAt)}}</template></el-table-column>
   </el-table>
+  </div>
   <ListPager v-model:page="query.page" v-model:page-size="query.pageSize" :total="total" @change="load"/>
 </section>
 </div></template>

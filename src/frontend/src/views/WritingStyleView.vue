@@ -33,28 +33,28 @@ onMounted(async()=>{await load();timer=window.setInterval(loadJobs,3000);});
 onUnmounted(()=>timer&&clearInterval(timer));
 </script>
 
-<template><div>
+<template><div class="page-fill writing-style-page">
 <PageHeader eyebrow="STYLE INTELLIGENCE" title="写作风格管理" description="分页查看学习任务与风格模型，支持关键字和状态筛选。"><el-button class="ghost-button" @click="load"><el-icon><Refresh/></el-icon>刷新</el-button></PageHeader>
 
-<section class="glass-panel content-card style-job-panel">
+<div class="writing-style-content"><section class="glass-panel content-card style-job-panel table-page-card">
   <div class="card-head"><div><span class="eyebrow">LEARNING PIPELINE</span><h3>写法学习任务</h3></div><span>{{jobTotal}} TASKS</span></div>
   <div class="list-filter-bar compact-filter">
     <el-input v-model="jobQuery.keyword" clearable placeholder="搜索任务 / 异常" @keyup.enter="searchJobs"><template #prefix><el-icon><Search/></el-icon></template></el-input>
     <el-select v-model="jobQuery.status" clearable placeholder="全部状态"><el-option v-for="s in ['Queued','Running','Stopping','Stopped','Completed','Failed']" :key="s" :label="s" :value="s"/></el-select>
     <el-button class="neon-button" @click="searchJobs">查询</el-button>
   </div>
-  <el-table :data="jobs" class="cyber-table">
+  <div class="table-flex-region"><el-table :data="jobs" class="cyber-table" height="100%">
     <el-table-column prop="id" label="任务" width="90"/>
     <el-table-column label="状态" width="130"><template #default="{row}"><StatusBadge :status="row.status"/></template></el-table-column>
     <el-table-column label="进度" min-width="240"><template #default="{row}"><el-progress :percentage="row.progress" :stroke-width="6"/><div class="checkpoint-text">步骤 {{row.checkpoint||0}} / {{row.totalSteps||0}}</div></template></el-table-column>
     <el-table-column label="开始时间" width="190"><template #default="{row}">{{row.startedAt?new Date(row.startedAt).toLocaleString():'—'}}</template></el-table-column>
     <el-table-column label="预计完成" width="190"><template #default="{row}">{{row.estimatedCompletionAt?new Date(row.estimatedCompletionAt).toLocaleString():(row.status==='Running'?'计算中':'—')}}</template></el-table-column>
     <el-table-column label="异常" min-width="260"><template #default="{row}"><span v-if="row.status==='Failed'" class="danger-text">{{(row.error||'未知异常').split('\n')[0]}}</span><span v-else class="muted-text">—</span></template></el-table-column>
-  </el-table>
+  </el-table></div>
   <ListPager v-model:page="jobQuery.page" v-model:page-size="jobQuery.pageSize" :total="jobTotal" @change="loadJobs"/>
 </section>
 
-<section class="glass-panel content-card" style="margin-top:16px">
+<section class="glass-panel content-card style-model-panel">
   <div class="card-head"><div><span class="eyebrow">STYLE MODELS</span><h3>已学习风格模型</h3></div><span>{{styleTotal}} MODELS</span></div>
   <div class="list-filter-bar compact-filter">
     <el-input v-model="styleQuery.keyword" clearable placeholder="搜索风格名称 / 来源小说 / 摘要" @keyup.enter="searchStyles"><template #prefix><el-icon><Search/></el-icon></template></el-input>
@@ -70,7 +70,7 @@ onUnmounted(()=>timer&&clearInterval(timer));
   </div>
   <EmptyState v-else title="没有匹配的写作风格" description="调整查询条件，或从小说资产发起写法学习。"/>
   <ListPager v-model:page="styleQuery.page" v-model:page-size="styleQuery.pageSize" :total="styleTotal" @change="loadStyles"/>
-</section>
+</section></div>
 
 <el-dialog v-model="editorVisible" title="编辑写作风格" width="760px" class="theme-dialog">
   <el-form label-position="top"><el-form-item label="风格名称"><el-input v-model="form.name"/></el-form-item><el-form-item label="风格摘要"><el-input v-model="form.summary" type="textarea" :rows="8"/></el-form-item><el-form-item label="生成提示词模板"><el-input v-model="form.promptTemplate" type="textarea" :rows="12"/></el-form-item></el-form>
