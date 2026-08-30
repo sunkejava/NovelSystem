@@ -50,14 +50,31 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
         await db.SaveChangesAsync(cancellationToken);
 
         var chunks = SplitByParagraph(novel.Content, chunkSize).ToList();
-        var startIndex = Math.Clamp(job.Checkpoint, 0, chunks.Count);
 
-        job.TotalSteps = chunks.Count;
-        job.Progress = chunks.Count == 0
+        // 断点必须直接从数据库读取，而不是依赖当前 DbContext 中可能陈旧的跟踪实体。
+        // Checkpoint 的语义：已经完整解析并成功入库的“顶层小说分块数量”。
+        // 因此失败在第 N 块时，数据库保存 N-1；重试 startIndex=N-1，正好从异常块重新开始。
+        var persistedCheckpoint = await db.Jobs.AsNoTracking()
+            .Where(x => x.Id == jobId)
+            .Select(x => x.Checkpoint)
+            .SingleAsync(cancellationToken);
+
+        var startIndex = Math.Clamp(persistedCheckpoint, 0, chunks.Count);
+        var initialProgress = chunks.Count == 0
             ? 0
             : (int)Math.Round(startIndex * 100d / chunks.Count);
-        JobTimingCalculator.Refresh(job);
-        await db.SaveChangesAsync(cancellationToken);
+
+        await db.Jobs
+            .Where(x => x.Id == jobId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.TotalSteps, chunks.Count)
+                .SetProperty(x => x.Progress, initialProgress),
+                cancellationToken);
+
+        // 同步本地对象仅用于 ETA 计算，不负责断点持久化。
+        job.Checkpoint = startIndex;
+        job.TotalSteps = chunks.Count;
+        job.Progress = initialProgress;
 
         var scriptOrder = await db.ScriptLines
             .Where(x => x.NovelId == novelId)
@@ -141,6 +158,8 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
             // 先保存本块人物/脚本，再用独立 SQL 更新任务进度。
             await db.SaveChangesAsync(cancellationToken);
 
+            // 只有“当前顶层块完整解析 + 所有实体成功写库”之后，才推进断点。
+            // AnalyzeChunkWithFallbackAsync 内部即使拆成多个子块，也不会提前改变顶层 checkpoint。
             job.Checkpoint = index + 1;
             job.Progress = (int)Math.Round(job.Checkpoint * 100d / Math.Max(chunks.Count, 1));
             JobTimingCalculator.Refresh(job);
@@ -163,8 +182,8 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                     .SetProperty(x => x.EstimatedCompletionAt, eta),
                     cancellationToken);
 
-            // ExecuteUpdate 不更新已跟踪实体的 OriginalValues，这里同步标记避免后续 SaveChanges 覆盖数据库进度。
-            db.Entry(job).State = EntityState.Unchanged;
+            // 立即从数据库重新加载跟踪实体，确保后续异常处理看到的是最新断点。
+            await db.Entry(job).ReloadAsync(cancellationToken);
         }
 
         novel.Status = NovelStatus.Analyzed;

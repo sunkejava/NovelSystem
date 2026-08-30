@@ -124,16 +124,49 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         }
         catch (OperationCanceledException ex) when (ex.Message.Contains("用户停止"))
         {
-            job.Status = "Stopped";
-            JobTimingCalculator.MarkTerminal(job);
-            await db.SaveChangesAsync(CancellationToken.None);
+            var finishedAt = DateTime.UtcNow;
+            var startedAt = await db.Jobs.AsNoTracking()
+                .Where(x => x.Id == job.Id)
+                .Select(x => x.StartedAt)
+                .SingleAsync(CancellationToken.None);
+
+            var elapsed = startedAt.HasValue
+                ? Math.Max(0L, (long)(finishedAt - JobTimingCalculator.EnsureUtc(startedAt.Value)).TotalMilliseconds)
+                : 0L;
+
+            // 只更新终态字段，不触碰 Checkpoint / Progress / TotalSteps，
+            // 避免被当前 DbContext 中的旧跟踪值覆盖真实断点。
+            await db.Jobs
+                .Where(x => x.Id == job.Id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Status, "Stopped")
+                    .SetProperty(x => x.FinishedAt, finishedAt)
+                    .SetProperty(x => x.ElapsedMilliseconds, elapsed)
+                    .SetProperty(x => x.EstimatedCompletionAt, (DateTime?)null),
+                    CancellationToken.None);
         }
         catch (Exception ex)
         {
-            job.Status = "Failed";
-            job.Error = ex.ToString();
-            JobTimingCalculator.MarkTerminal(job);
-            await db.SaveChangesAsync(CancellationToken.None);
+            var finishedAt = DateTime.UtcNow;
+            var startedAt = await db.Jobs.AsNoTracking()
+                .Where(x => x.Id == job.Id)
+                .Select(x => x.StartedAt)
+                .SingleAsync(CancellationToken.None);
+
+            var elapsed = startedAt.HasValue
+                ? Math.Max(0L, (long)(finishedAt - JobTimingCalculator.EnsureUtc(startedAt.Value)).TotalMilliseconds)
+                : 0L;
+
+            // 失败时仅更新失败信息和结束时间，明确保留最后成功块的断点。
+            await db.Jobs
+                .Where(x => x.Id == job.Id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Status, "Failed")
+                    .SetProperty(x => x.Error, ex.ToString())
+                    .SetProperty(x => x.FinishedAt, finishedAt)
+                    .SetProperty(x => x.ElapsedMilliseconds, elapsed)
+                    .SetProperty(x => x.EstimatedCompletionAt, (DateTime?)null),
+                    CancellationToken.None);
         }
     }
 
