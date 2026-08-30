@@ -118,9 +118,11 @@ public sealed class Qwen3TtsClient(IHttpClientFactory httpClientFactory, AppDbCo
             new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             cancellationToken);
 
+        var ffmpegPath = new SettingReader(db).Get("FfmpegPath", "ffmpeg");
         var startInfo = new ProcessStartInfo
         {
-            FileName = new SettingReader(db).Get("FfmpegPath", "ffmpeg"),
+            FileName = ffmpegPath,
+            WorkingDirectory = concatDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -134,7 +136,8 @@ public sealed class Qwen3TtsClient(IHttpClientFactory httpClientFactory, AppDbCo
         startInfo.ArgumentList.Add("-safe");
         startInfo.ArgumentList.Add("0");
         startInfo.ArgumentList.Add("-i");
-        startInfo.ArgumentList.Add(concatFile);
+        // WorkingDirectory 已固定到 concat 所在目录，旧版 FFmpeg 下只传文件名更稳定。
+        startInfo.ArgumentList.Add(Path.GetFileName(concatFile));
         startInfo.ArgumentList.Add("-c:a");
         startInfo.ArgumentList.Add("libmp3lame");
         startInfo.ArgumentList.Add("-q:a");
@@ -157,6 +160,8 @@ public sealed class Qwen3TtsClient(IHttpClientFactory httpClientFactory, AppDbCo
         {
             throw new InvalidOperationException(
                 $"FFmpeg 合并失败，ExitCode={process.ExitCode}.{Environment.NewLine}" +
+                $"WorkingDirectory={concatDirectory}{Environment.NewLine}" +
+                $"ConcatFile={concatFile}{Environment.NewLine}" +
                 $"{standardError}{Environment.NewLine}{standardOutput}");
         }
 
