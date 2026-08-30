@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+data/
+storage/
+voices/
+*.db
+*.wav
+*.mp3
+.env
