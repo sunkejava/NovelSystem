@@ -82,30 +82,88 @@ public sealed class Qwen3TtsClient(IHttpClientFactory httpClientFactory, AppDbCo
         if (files.Count == 0)
             throw new InvalidOperationException("没有可合并的音频片段。");
 
-        Directory.CreateDirectory(Path.GetDirectoryName(outputFile)!);
-        var concatFile = Path.ChangeExtension(outputFile, ".concat.txt");
+        // 所有路径先转换成绝对路径进行校验，但 concat 清单中写相对于清单文件的路径。
+        // 这是为了兼容 Windows 下较旧版本 FFmpeg（如 4.0.x）对
+        // file 'D:\\xxx\\audio.wav' 的解析问题，避免被错误拼接成：
+        // storage/output/D:\\xxx\\audio.wav。
+        var outputFullPath = Path.GetFullPath(outputFile);
+        var outputDirectory = Path.GetDirectoryName(outputFullPath)
+                              ?? throw new InvalidOperationException("无法确定 MP3 输出目录。");
+        Directory.CreateDirectory(outputDirectory);
+
+        var concatFile = Path.ChangeExtension(outputFullPath, ".concat.txt");
+        var concatDirectory = Path.GetDirectoryName(concatFile)
+                              ?? throw new InvalidOperationException("无法确定 concat 清单目录。");
+
+        var concatLines = new List<string>(files.Count);
+        foreach (var inputFile in files)
+        {
+            var inputFullPath = Path.GetFullPath(inputFile);
+            if (!File.Exists(inputFullPath))
+                throw new FileNotFoundException("待合并的音频片段不存在。", inputFullPath);
+
+            // FFmpeg concat demuxer 的相对路径是以 concat 文件所在目录为基准。
+            // 统一使用 /，可以同时兼容 Windows 与 Linux。
+            var relativePath = Path.GetRelativePath(concatDirectory, inputFullPath)
+                .Replace('\\', '/');
+
+            // concat 清单使用单引号包裹路径，单引号本身需要转义。
+            var escapedPath = relativePath.Replace("'", "'\\''");
+            concatLines.Add($"file '{escapedPath}'");
+        }
+
         await File.WriteAllLinesAsync(
             concatFile,
-            files.Select(x => $"file '{Path.GetFullPath(x).Replace("'", "'\\''")}'"),
+            concatLines,
+            new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             cancellationToken);
 
         var startInfo = new ProcessStartInfo
         {
             FileName = new SettingReader(db).Get("FfmpegPath", "ffmpeg"),
-            Arguments = $"-y -f concat -safe 0 -i \"{concatFile}\" -c:a libmp3lame -q:a 2 \"{outputFile}\"",
+            RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
 
+        // 使用 ArgumentList 避免 Windows 路径包含空格、中文时出现二次转义问题。
+        startInfo.ArgumentList.Add("-y");
+        startInfo.ArgumentList.Add("-f");
+        startInfo.ArgumentList.Add("concat");
+        startInfo.ArgumentList.Add("-safe");
+        startInfo.ArgumentList.Add("0");
+        startInfo.ArgumentList.Add("-i");
+        startInfo.ArgumentList.Add(concatFile);
+        startInfo.ArgumentList.Add("-c:a");
+        startInfo.ArgumentList.Add("libmp3lame");
+        startInfo.ArgumentList.Add("-q:a");
+        startInfo.ArgumentList.Add("2");
+        startInfo.ArgumentList.Add(outputFullPath);
+
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("无法启动 FFmpeg。");
+
+        // 先异步读取输出，避免 FFmpeg 输出较多时 stderr 缓冲区写满导致进程阻塞。
+        var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+
         await process.WaitForExitAsync(cancellationToken);
 
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException(await process.StandardError.ReadToEndAsync(cancellationToken));
+        var standardOutput = await standardOutputTask;
+        var standardError = await standardErrorTask;
 
-        return outputFile;
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"FFmpeg 合并失败，ExitCode={process.ExitCode}.{Environment.NewLine}" +
+                $"{standardError}{Environment.NewLine}{standardOutput}");
+        }
+
+        if (!File.Exists(outputFullPath))
+            throw new InvalidOperationException("FFmpeg 返回成功，但没有生成目标 MP3 文件。");
+
+        return outputFullPath;
     }
 
     private async Task<string> GenerateByPromptAsync(
