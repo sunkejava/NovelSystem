@@ -30,4 +30,5 @@ app.MapJobEndpoints();
 app.MapSettingEndpoints();
 app.MapWritingEndpoints();
 app.MapAudioEndpoints();
+app.MapTokenUsageEndpoints();
 app.Run();

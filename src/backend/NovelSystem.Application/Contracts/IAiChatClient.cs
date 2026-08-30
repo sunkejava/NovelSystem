@@ -1,3 +1,5 @@
+using NovelSystem.Application.Models;
+
 namespace NovelSystem.Application.Contracts;
 
 /// <summary>大语言模型调用抽象，默认由 llama.cpp 实现。</summary>
@@ -8,12 +10,22 @@ public interface IAiChatClient
         string userPrompt,
         CancellationToken cancellationToken = default);
 
-    /// <summary>
-    /// 要求模型返回 JSON。用于小说结构解析等结构化任务，
-    /// 实现层可启用 llama.cpp response_format 与 Prompt Cache。
-    /// </summary>
     Task<string> ChatJsonAsync(
         string systemPrompt,
         string userPrompt,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>带业务上下文的普通文本调用，会持久化 Token / timings。</summary>
+    Task<string> ChatTrackedAsync(
+        string systemPrompt,
+        string userPrompt,
+        AiCallContext context,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>带业务上下文的 JSON 调用，会持久化 Token / timings。</summary>
+    Task<string> ChatJsonTrackedAsync(
+        string systemPrompt,
+        string userPrompt,
+        AiCallContext context,
         CancellationToken cancellationToken = default);
 }

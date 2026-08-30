@@ -1,6 +1,8 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using NovelSystem.Application.Contracts;
+using NovelSystem.Application.Models;
+using NovelSystem.Domain.Entities;
 using NovelSystem.Infrastructure.Persistence;
 using NovelSystem.Infrastructure.Services;
 
@@ -16,18 +18,33 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
         string systemPrompt,
         string userPrompt,
         CancellationToken cancellationToken = default)
-        => SendAsync(systemPrompt, userPrompt, jsonMode: false, cancellationToken);
+        => SendAsync(systemPrompt, userPrompt, jsonMode: false, context: null, cancellationToken);
 
     public Task<string> ChatJsonAsync(
         string systemPrompt,
         string userPrompt,
         CancellationToken cancellationToken = default)
-        => SendAsync(systemPrompt, userPrompt, jsonMode: true, cancellationToken);
+        => SendAsync(systemPrompt, userPrompt, jsonMode: true, context: null, cancellationToken);
+
+    public Task<string> ChatTrackedAsync(
+        string systemPrompt,
+        string userPrompt,
+        AiCallContext context,
+        CancellationToken cancellationToken = default)
+        => SendAsync(systemPrompt, userPrompt, jsonMode: false, context, cancellationToken);
+
+    public Task<string> ChatJsonTrackedAsync(
+        string systemPrompt,
+        string userPrompt,
+        AiCallContext context,
+        CancellationToken cancellationToken = default)
+        => SendAsync(systemPrompt, userPrompt, jsonMode: true, context, cancellationToken);
 
     private async Task<string> SendAsync(
         string systemPrompt,
         string userPrompt,
         bool jsonMode,
+        AiCallContext? context,
         CancellationToken cancellationToken)
     {
         var settings = new SettingReader(db);
@@ -117,20 +134,148 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
             payload = common;
         }
 
-        using var response = await client.PostAsJsonAsync(
-            $"{baseUrl}/chat/completions",
-            payload,
-            cancellationToken);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        string? body = null;
 
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        response.EnsureSuccessStatusCode();
+        try
+        {
+            using var response = await client.PostAsJsonAsync(
+                $"{baseUrl}/chat/completions",
+                payload,
+                cancellationToken);
 
-        using var json = JsonDocument.Parse(body);
-        return json.RootElement
-                   .GetProperty("choices")[0]
-                   .GetProperty("message")
-                   .GetProperty("content")
-                   .GetString()
-               ?? string.Empty;
+            body = await response.Content.ReadAsStringAsync(cancellationToken);
+            response.EnsureSuccessStatusCode();
+            stopwatch.Stop();
+
+            using var json = JsonDocument.Parse(body);
+            var root = json.RootElement;
+            var content = root.GetProperty("choices")[0]
+                              .GetProperty("message")
+                              .GetProperty("content")
+                              .GetString()
+                          ?? string.Empty;
+
+            if (context is not null)
+                await SaveUsageAsync(
+                    context,
+                    model,
+                    systemPrompt.Length + userPrompt.Length,
+                    content.Length,
+                    root,
+                    stopwatch.ElapsedMilliseconds,
+                    true,
+                    null,
+                    cancellationToken);
+
+            return content;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            if (context is not null)
+            {
+                try
+                {
+                    JsonElement? root = null;
+                    if (!string.IsNullOrWhiteSpace(body))
+                    {
+                        using var errorJson = JsonDocument.Parse(body);
+                        root = errorJson.RootElement.Clone();
+                    }
+
+                    await SaveUsageAsync(
+                        context,
+                        model,
+                        systemPrompt.Length + userPrompt.Length,
+                        0,
+                        root,
+                        stopwatch.ElapsedMilliseconds,
+                        false,
+                        ex.Message,
+                        CancellationToken.None);
+                }
+                catch
+                {
+                    // 统计失败不能覆盖原始 AI 异常。
+                }
+            }
+
+            throw;
+        }
     }
+
+
+    private async Task SaveUsageAsync(
+        AiCallContext context,
+        string model,
+        int inputCharacters,
+        int outputCharacters,
+        JsonElement? root,
+        long elapsedMilliseconds,
+        bool success,
+        string? error,
+        CancellationToken cancellationToken)
+    {
+        var promptTokens = 0;
+        var completionTokens = 0;
+        var totalTokens = 0;
+        var cachedPromptTokens = 0;
+        var promptTokensPerSecond = 0d;
+        var completionTokensPerSecond = 0d;
+
+        if (root is { } value)
+        {
+            if (value.TryGetProperty("usage", out var usage))
+            {
+                promptTokens = GetInt(usage, "prompt_tokens");
+                completionTokens = GetInt(usage, "completion_tokens");
+                totalTokens = GetInt(usage, "total_tokens");
+                if (usage.TryGetProperty("prompt_tokens_details", out var details))
+                    cachedPromptTokens = GetInt(details, "cached_tokens");
+            }
+
+            if (value.TryGetProperty("timings", out var timings))
+            {
+                promptTokensPerSecond = GetDouble(timings, "prompt_per_second");
+                completionTokensPerSecond = GetDouble(timings, "predicted_per_second");
+                if (cachedPromptTokens == 0)
+                    cachedPromptTokens = GetInt(timings, "cache_n");
+            }
+        }
+
+        if (totalTokens == 0)
+            totalTokens = promptTokens + completionTokens;
+
+        db.AiTokenUsages.Add(new AiTokenUsage
+        {
+            NovelId = context.NovelId,
+            JobId = context.JobId,
+            Operation = context.Operation,
+            ChunkIndex = context.ChunkIndex,
+            ChunkTotal = context.ChunkTotal,
+            Model = model,
+            PromptTokens = promptTokens,
+            CompletionTokens = completionTokens,
+            TotalTokens = totalTokens,
+            CachedPromptTokens = cachedPromptTokens,
+            ElapsedMilliseconds = elapsedMilliseconds,
+            PromptTokensPerSecond = promptTokensPerSecond,
+            CompletionTokensPerSecond = completionTokensPerSecond,
+            InputCharacters = inputCharacters,
+            OutputCharacters = outputCharacters,
+            Success = success,
+            Error = error,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static int GetInt(JsonElement element, string name)
+        => element.TryGetProperty(name, out var property) && property.TryGetInt32(out var value) ? value : 0;
+
+    private static double GetDouble(JsonElement element, string name)
+        => element.TryGetProperty(name, out var property) && property.TryGetDouble(out var value) ? value : 0d;
+
 }

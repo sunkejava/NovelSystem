@@ -13,6 +13,7 @@ const routes:RouteRecordRaw[]=[
       {path:'jobs',component:()=>import('../views/JobCenterView.vue')},
       {path:'styles',component:()=>import('../views/WritingStyleView.vue')},
       {path:'writing',component:()=>import('../views/WritingStudioView.vue')},
+      {path:'tokens',component:()=>import('../views/TokenUsageView.vue')},
       {path:'settings',component:()=>import('../views/SettingsView.vue')}
     ]
   }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NovelSystem.Application.Contracts;
+using NovelSystem.Application.Models;
 using NovelSystem.Domain.Entities;
 using NovelSystem.Infrastructure.Persistence;
 using NovelSystem.Infrastructure.Jobs;
@@ -103,6 +104,10 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
 
             var parsed = await AnalyzeChunkWithFallbackAsync(
                 chunks[index],
+                novelId,
+                jobId,
+                index + 1,
+                chunks.Count,
                 cancellationToken);
 
             var newCharacters = new List<Character>();
@@ -214,14 +219,24 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
     /// </summary>
     private async Task<CompactAnalysisResult> AnalyzeChunkWithFallbackAsync(
         string chunk,
+        long novelId,
+        long jobId,
+        int chunkIndex,
+        int chunkTotal,
         CancellationToken cancellationToken,
         int depth = 0)
     {
         try
         {
-            var raw = await aiClient.ChatJsonAsync(
+            var raw = await aiClient.ChatJsonTrackedAsync(
                 AnalysisSystemPrompt,
                 AnalysisInstruction + chunk,
+                new AiCallContext(
+                    novelId,
+                    jobId,
+                    depth == 0 ? "AnalyzeNovelChunk" : "AnalyzeNovelChunkRetry",
+                    chunkIndex,
+                    chunkTotal),
                 cancellationToken);
 
             return ParseCompactResult(raw);
@@ -240,6 +255,10 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
             {
                 var child = await AnalyzeChunkWithFallbackAsync(
                     part,
+                    novelId,
+                    jobId,
+                    chunkIndex,
+                    chunkTotal,
                     cancellationToken,
                     depth + 1);
 

@@ -632,3 +632,14 @@ html[data-theme="dark"] .el-pagination .btn-next,
 html[data-theme="dark"] .el-pagination .el-pager li{background:#10182a!important;color:#c8d4e9!important}
 html[data-theme="dark"] .el-pagination .el-pager li.is-active{background:var(--accent)!important;color:#06111a!important}
 @media(max-width:1050px){.list-filter-bar,.list-filter-bar.compact-filter{grid-template-columns:1fr 1fr}.list-pager{align-items:flex-start;flex-direction:column}.task-summary-grid{grid-template-columns:1fr}}
+
+
+/* =========================
+   Token telemetry
+   ========================= */
+.token-metric-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.token-summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.token-accent{color:var(--accent)}
+.token-ok{color:var(--neon-green);font-weight:700}
+@media(max-width:1200px){.token-metric-grid{grid-template-columns:repeat(3,1fr)}.token-summary-grid{grid-template-columns:1fr}}
+@media(max-width:760px){.token-metric-grid{grid-template-columns:1fr 1fr}}

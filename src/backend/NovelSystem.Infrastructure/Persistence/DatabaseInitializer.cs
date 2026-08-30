@@ -13,6 +13,7 @@ public static class DatabaseInitializer
         await db.Database.EnsureCreatedAsync(cancellationToken);
         await EnsureVoiceProfileSchemaAsync(db, cancellationToken);
         await EnsureJobCheckpointSchemaAsync(db, cancellationToken);
+        await EnsureAiTokenUsageSchemaAsync(db, cancellationToken);
 
         var defaults = new Dictionary<string, string>
         {
@@ -85,6 +86,38 @@ public static class DatabaseInitializer
             await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "AverageStepMilliseconds" INTEGER NOT NULL DEFAULT 0;""", cancellationToken);
         if (!columns.Contains("EstimatedCompletionAt", StringComparer.OrdinalIgnoreCase))
             await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "EstimatedCompletionAt" TEXT NULL;""", cancellationToken);
+    }
+
+
+    private static async Task EnsureAiTokenUsageSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "AiTokenUsages" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_AiTokenUsages" PRIMARY KEY AUTOINCREMENT,
+                "NovelId" INTEGER NULL,
+                "JobId" INTEGER NULL,
+                "Operation" TEXT NOT NULL,
+                "ChunkIndex" INTEGER NULL,
+                "ChunkTotal" INTEGER NULL,
+                "Model" TEXT NOT NULL,
+                "PromptTokens" INTEGER NOT NULL,
+                "CompletionTokens" INTEGER NOT NULL,
+                "TotalTokens" INTEGER NOT NULL,
+                "CachedPromptTokens" INTEGER NOT NULL,
+                "ElapsedMilliseconds" INTEGER NOT NULL,
+                "PromptTokensPerSecond" REAL NOT NULL,
+                "CompletionTokensPerSecond" REAL NOT NULL,
+                "InputCharacters" INTEGER NOT NULL,
+                "OutputCharacters" INTEGER NOT NULL,
+                "Success" INTEGER NOT NULL,
+                "Error" TEXT NULL,
+                "CreatedAt" TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_AiTokenUsages_NovelId_JobId_Operation"
+                ON "AiTokenUsages" ("NovelId","JobId","Operation");
+            CREATE INDEX IF NOT EXISTS "IX_AiTokenUsages_CreatedAt"
+                ON "AiTokenUsages" ("CreatedAt");
+            """, cancellationToken);
     }
 
     private static async Task<List<string>> GetColumnsAsync(AppDbContext db, string tableName, CancellationToken cancellationToken)

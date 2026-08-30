@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {useRoute,useRouter} from 'vue-router';
-import {DataAnalysis,Document,MagicStick,Setting,Operation,Cpu,Moon,Sunny} from '@element-plus/icons-vue';
+import {DataAnalysis,Document,MagicStick,Setting,Operation,Cpu,Moon,Sunny,TrendCharts} from '@element-plus/icons-vue';
 import {useTheme} from '../composables/useTheme';
 
 const route=useRoute();
@@ -13,6 +13,7 @@ const menus=[
   {path:'/jobs',label:'任务中枢',icon:Operation},
   {path:'/styles',label:'写作风格',icon:MagicStick},
   {path:'/writing',label:'AI 创作舱',icon:MagicStick},
+  {path:'/tokens',label:'Token统计',icon:TrendCharts},
   {path:'/settings',label:'模型设置',icon:Setting}
 ];
 

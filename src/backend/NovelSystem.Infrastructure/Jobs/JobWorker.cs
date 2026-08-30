@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NovelSystem.Application.Contracts;
+using NovelSystem.Application.Models;
 using NovelSystem.Domain.Entities;
 using NovelSystem.Infrastructure.Persistence;
 
@@ -364,9 +365,15 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         {
             await EnsureNotStoppingAsync(db, job, cancellationToken);
 
-            var result = await ai.ChatAsync(
+            var result = await ai.ChatTrackedAsync(
                 "你是小说写作技法研究专家。请只分析写作技法，不复述大段原文。",
                 "请分析本片段的叙事视角、语言风格、章节节奏、人物塑造、对白方式、悬念设计、情绪推进、句式特点和可复用写作规则。\n\n" + chunks[index],
+                new AiCallContext(
+                    novelId,
+                    job.Id,
+                    "LearnWritingStyleChunk",
+                    index + 1,
+                    chunks.Count),
                 cancellationToken);
 
             partials.Add(result);
@@ -379,10 +386,16 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
 
         await EnsureNotStoppingAsync(db, job, cancellationToken);
 
-        var synthesis = await ai.ChatAsync(
+        var synthesis = await ai.ChatTrackedAsync(
             "你是小说写作方法论专家。根据多段分析结果，整理成一个稳定、可复用、可指导新小说生成的写作风格模型。",
             "请生成：1. 风格总览；2. 叙事视角；3. 语言与句式；4. 节奏；5. 人物塑造；6. 对白；7. 悬念；8. 情绪推进；9. 禁忌；10. 可直接给小说生成模型使用的完整提示词模板。\n\n" +
             string.Join("\n\n--- 分块分析 ---\n", partials),
+            new AiCallContext(
+                novelId,
+                job.Id,
+                "LearnWritingStyleSynthesis",
+                chunks.Count + 1,
+                chunks.Count + 1),
             cancellationToken);
 
         var style = new WritingStyle

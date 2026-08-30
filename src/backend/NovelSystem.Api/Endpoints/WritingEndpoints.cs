@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NovelSystem.Api.Contracts;
 using NovelSystem.Application.Contracts;
+using NovelSystem.Application.Models;
 using NovelSystem.Domain.Entities;
 using NovelSystem.Infrastructure.Jobs;
 using NovelSystem.Infrastructure.Persistence;
@@ -122,9 +123,10 @@ public static class WritingEndpoints
         group.MapPost("/generate", async (GenerateNovelRequest request, AppDbContext db, IAiChatClient ai) =>
         {
             var style = request.StyleId is null ? null : await db.WritingStyles.FindAsync(request.StyleId);
-            var content = await ai.ChatAsync(
+            var content = await ai.ChatTrackedAsync(
                 "你是专业中文小说作者。学习给定技巧，但必须创作全新的故事、人物和文本。",
-                (style?.PromptTemplate ?? string.Empty) + "\n\n创作任务：" + request.Prompt);
+                (style?.PromptTemplate ?? string.Empty) + "\n\n创作任务：" + request.Prompt,
+                new AiCallContext(request.SourceNovelId, null, "GenerateNovel"));
 
             var novel = new GeneratedNovel
             {

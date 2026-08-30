@@ -14,6 +14,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<WritingStyle> WritingStyles => Set<WritingStyle>();
     public DbSet<GeneratedNovel> GeneratedNovels => Set<GeneratedNovel>();
     public DbSet<VoiceProfile> VoiceProfiles => Set<VoiceProfile>();
+    public DbSet<AiTokenUsage> AiTokenUsages => Set<AiTokenUsage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -21,6 +22,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.Entity<Character>().HasIndex(x => new { x.NovelId, x.Name });
         modelBuilder.Entity<ScriptLine>().HasIndex(x => new { x.NovelId, x.Order });
         modelBuilder.Entity<VoiceProfile>().HasIndex(x => x.Name);
+        modelBuilder.Entity<AiTokenUsage>().HasIndex(x => new { x.NovelId, x.JobId, x.Operation });
+        modelBuilder.Entity<AiTokenUsage>().HasIndex(x => x.CreatedAt);
         base.OnModelCreating(modelBuilder);
     }
 }
