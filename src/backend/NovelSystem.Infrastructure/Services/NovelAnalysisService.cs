@@ -83,12 +83,9 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
             if (currentStatus == "Stopping")
                 throw new OperationCanceledException("任务已由用户停止。");
 
-            var raw = await aiClient.ChatJsonAsync(
-                AnalysisSystemPrompt,
-                AnalysisInstruction + chunks[index],
+            var parsed = await AnalyzeChunkWithFallbackAsync(
+                chunks[index],
                 cancellationToken);
-
-            var parsed = ParseCompactResult(raw);
 
             var newCharacters = new List<Character>();
             foreach (var item in parsed.Characters)
@@ -188,6 +185,83 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                 cancellationToken);
 
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// 调用 LLM 解析单个小说块。
+    /// 当模型因为 max_tokens、上下文长度或偶发格式问题返回未闭合 JSON 时，
+    /// 自动把当前块继续二分后分别解析并合并结果，避免整个长任务失败。
+    /// </summary>
+    private async Task<CompactAnalysisResult> AnalyzeChunkWithFallbackAsync(
+        string chunk,
+        CancellationToken cancellationToken,
+        int depth = 0)
+    {
+        try
+        {
+            var raw = await aiClient.ChatJsonAsync(
+                AnalysisSystemPrompt,
+                AnalysisInstruction + chunk,
+                cancellationToken);
+
+            return ParseCompactResult(raw);
+        }
+        catch (JsonException ex) when (chunk.Length > 1200 && depth < 4)
+        {
+            var parts = SplitForRetry(chunk).ToList();
+            if (parts.Count <= 1)
+                throw new InvalidOperationException(
+                    $"LLM 返回的 JSON 不完整，且当前片段无法继续安全拆分。片段长度={chunk.Length}。",
+                    ex);
+
+            var merged = new CompactAnalysisResult();
+
+            foreach (var part in parts)
+            {
+                var child = await AnalyzeChunkWithFallbackAsync(
+                    part,
+                    cancellationToken,
+                    depth + 1);
+
+                merged.Characters.AddRange(child.Characters);
+                merged.Scripts.AddRange(child.Scripts);
+            }
+
+            return merged;
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException(
+                $"LLM 返回的 JSON 不完整或格式错误。片段长度={chunk.Length}。建议提高“解析最大输出 Token”或减小“小说自动拆分长度”。",
+                ex);
+        }
+    }
+
+    /// <summary>
+    /// JSON 截断重试时优先在自然段附近二分，尽量避免把一句话/对白切成两半。
+    /// </summary>
+    private static IEnumerable<string> SplitForRetry(string chunk)
+    {
+        if (string.IsNullOrWhiteSpace(chunk))
+            yield break;
+
+        var midpoint = chunk.Length / 2;
+        var leftBoundary = chunk.LastIndexOf('\n', midpoint);
+        var rightBoundary = chunk.IndexOf('\n', midpoint);
+
+        var splitIndex = leftBoundary > chunk.Length / 4
+            ? leftBoundary
+            : rightBoundary > 0 && rightBoundary < chunk.Length * 3 / 4
+                ? rightBoundary
+                : midpoint;
+
+        var left = chunk[..splitIndex].Trim();
+        var right = chunk[splitIndex..].Trim();
+
+        if (!string.IsNullOrWhiteSpace(left))
+            yield return left;
+        if (!string.IsNullOrWhiteSpace(right))
+            yield return right;
     }
 
     private static CompactAnalysisResult ParseCompactResult(string raw)

@@ -23,7 +23,7 @@ public static class DatabaseInitializer
             ["AiCachePrompt"] = "true",
             ["AiEnableThinking"] = "false",
             ["AiUseJsonResponseFormat"] = "false",
-            ["AiAnalysisMaxTokens"] = "8192",
+            ["AiAnalysisMaxTokens"] = "16384",
             ["TtsBaseUrl"] = "http://127.0.0.1:8000",
             ["TtsUploadEndpoint"] = "/gradio_api/upload",
             ["TtsVoiceCloneSubmitEndpoint"] = "/gradio_api/call/v2/run_voice_clone",

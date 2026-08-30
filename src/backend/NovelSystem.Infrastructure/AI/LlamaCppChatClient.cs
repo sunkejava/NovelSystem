@@ -38,9 +38,17 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
             ? Math.Clamp(timeout, 10, 3600)
             : 120;
 
-        var maxTokens = int.TryParse(settings.Get("AiAnalysisMaxTokens", "8192"), out var configuredMaxTokens)
-            ? Math.Clamp(configuredMaxTokens, 512, 65536)
-            : 8192;
+        var configuredMaxTokens = int.TryParse(settings.Get("AiAnalysisMaxTokens", "16384"), out var configured)
+            ? Math.Clamp(configured, 512, 65536)
+            : 16384;
+
+        // 中文小说结构化提取的输出长度经常接近甚至超过输入字符数。
+        // 如果 max_tokens 过小，llama.cpp 会在 JSON 数组闭合前直接截断。
+        // jsonMode 下根据当前输入长度动态预留输出空间，用户配置作为最低值。
+        var estimatedJsonTokens = Math.Clamp(userPrompt.Length * 2, 4096, 32768);
+        var maxTokens = jsonMode
+            ? Math.Max(configuredMaxTokens, estimatedJsonTokens)
+            : configuredMaxTokens;
 
         var cachePrompt = !bool.TryParse(settings.Get("AiCachePrompt", "true"), out var configuredCache)
                           || configuredCache;
