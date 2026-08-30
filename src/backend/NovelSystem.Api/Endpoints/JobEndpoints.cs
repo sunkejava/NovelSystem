@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using NovelSystem.Infrastructure.Jobs;
 using NovelSystem.Infrastructure.Persistence;
 
