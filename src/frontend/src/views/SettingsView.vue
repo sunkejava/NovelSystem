@@ -186,10 +186,16 @@ onMounted(load);
           <el-form-item label="解析最大输出 Token">
             <el-input v-model="form.AiAnalysisMaxTokens" type="number" placeholder="16384"/>
           </el-form-item>
-          <el-form-item label="llama.cpp Prompt Cache">
+          <el-form-item label="普通 AI Prompt Cache">
             <el-select v-model="form.AiCachePrompt" class="full-width">
               <el-option label="启用（推荐）" value="true"/>
               <el-option label="禁用" value="false"/>
+            </el-select>
+          </el-form-item>
+          <el-form-item label="小说分块解析 Prompt Cache">
+            <el-select v-model="form.AiAnalysisCachePrompt" class="full-width">
+              <el-option label="关闭（推荐，分块完全隔离）" value="false"/>
+              <el-option label="启用" value="true"/>
             </el-select>
           </el-form-item>
           <el-form-item label="Qwen Thinking / Reasoning">

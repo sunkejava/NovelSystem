@@ -50,8 +50,18 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
             ? Math.Max(configuredMaxTokens, estimatedJsonTokens)
             : configuredMaxTokens;
 
-        var cachePrompt = !bool.TryParse(settings.Get("AiCachePrompt", "true"), out var configuredCache)
-                          || configuredCache;
+        var generalCachePrompt = !bool.TryParse(settings.Get("AiCachePrompt", "true"), out var configuredCache)
+                                 || configuredCache;
+
+        // 小说解析分块彼此独立，不应该继承上一块的 KV/slot 状态。
+        // 默认关闭解析专用 Prompt Cache，避免连续数十/数百次请求后 slot/cache 状态累积，
+        // 导致后续分块 prompt/decode 耗时逐步上升。
+        var analysisCachePrompt = bool.TryParse(
+                                      settings.Get("AiAnalysisCachePrompt", "false"),
+                                      out var configuredAnalysisCache)
+                                  && configuredAnalysisCache;
+
+        var cachePrompt = jsonMode ? analysisCachePrompt : generalCachePrompt;
 
         var enableThinking = bool.TryParse(settings.Get("AiEnableThinking", "false"), out var thinking)
                              && thinking;
@@ -78,6 +88,8 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
             max_tokens = maxTokens,
             stream = false,
             cache_prompt = cachePrompt,
+            // -1 表示让 server 为每次独立请求选择空闲 slot，不固定到某个历史 slot。
+            id_slot = -1,
             chat_template_kwargs = new
             {
                 enable_thinking = enableThinking
@@ -95,6 +107,7 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
                 common.max_tokens,
                 common.stream,
                 common.cache_prompt,
+                common.id_slot,
                 common.chat_template_kwargs,
                 response_format = new { type = "json_object" }
             };

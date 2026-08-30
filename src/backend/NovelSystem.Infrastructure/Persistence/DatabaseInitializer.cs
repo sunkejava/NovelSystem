@@ -21,6 +21,7 @@ public static class DatabaseInitializer
             ["AiTimeoutSeconds"] = "120",
             ["AiChunkSize"] = "8000",
             ["AiCachePrompt"] = "true",
+            ["AiAnalysisCachePrompt"] = "false",
             ["AiEnableThinking"] = "false",
             ["AiUseJsonResponseFormat"] = "false",
             ["AiAnalysisMaxTokens"] = "16384",
