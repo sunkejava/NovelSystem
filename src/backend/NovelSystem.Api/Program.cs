@@ -33,6 +33,9 @@ app.MapGet("/api/writing/styles",async(AppDb db)=>await db.WritingStyles.OrderBy
 app.MapPost("/api/writing/generate",async(GenerateRequest r,AppDb db,AiClient ai)=>{var st=r.StyleId is null?null:await db.WritingStyles.FindAsync(r.StyleId);var text=await ai.Chat("你是专业中文小说作者。保持给定写作方法，但生成全新内容。",(st?.PromptTemplate??"")+"\n创作要求："+r.Prompt);var g=new GeneratedNovel{Title=r.Title,StyleId=r.StyleId,SourceNovelId=r.SourceNovelId,Prompt=r.Prompt,Content=text};db.GeneratedNovels.Add(g);await db.SaveChangesAsync();return Results.Ok(g);});
 app.MapGet("/api/writing/generated",async(AppDb db)=>await db.GeneratedNovels.OrderByDescending(x=>x.Id).ToListAsync());
 app.MapGet("/api/writing/generated/{id:long}/download",async(long id,AppDb db)=>{var g=await db.GeneratedNovels.FindAsync(id);return g==null?Results.NotFound():Results.File(Encoding.UTF8.GetBytes(g.Content),"text/plain",g.Title+".txt");});
+
+app.MapPost("/api/writing/generated/{id:long}/publish",async(long id,AppDb db)=>{var g=await db.GeneratedNovels.FindAsync(id);if(g==null)return Results.NotFound();var n=new Novel{Title=g.Title,SourceFile="AI生成",Content=g.Content,Status="Uploaded"};db.Novels.Add(n);await db.SaveChangesAsync();return Results.Ok(n);});
+app.MapGet("/api/jobs/{id:long}/download",async(long id,AppDb db)=>{var j=await db.Jobs.FindAsync(id);if(j?.Result==null||!File.Exists(j.Result))return Results.NotFound();return Results.File(j.Result,"audio/mpeg",Path.GetFileName(j.Result));});
 app.Run();
 
 record GenerateRequest(string Title,long? StyleId,long? SourceNovelId,string Prompt);
