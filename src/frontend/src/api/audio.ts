@@ -1,7 +1,6 @@
 import {http} from './http';
-
 export const audioApi={
-  list:(novelId:number|string)=>http.get('/audio/novels/'+novelId).then(r=>r.data),
+  list:(novelId:number|string,params:any={})=>http.get('/audio/novels/'+novelId,{params}).then(r=>r.data),
   generateSegment:(scriptLineId:number)=>http.post('/audio/segments/'+scriptLineId+'/generate').then(r=>r.data),
   removeSegment:(scriptLineId:number)=>http.delete('/audio/segments/'+scriptLineId),
   merge:(novelId:number|string)=>http.post('/audio/novels/'+novelId+'/merge').then(r=>r.data),

@@ -618,3 +618,17 @@ html[data-theme="light"] audio{color-scheme:light}
   color:var(--text-secondary);
   font-size:9px;
 }
+
+
+/* =========================
+   Unified list query + paging
+   ========================= */
+.list-filter-bar{display:grid;grid-template-columns:minmax(260px,1.5fr) minmax(150px,.7fr) minmax(150px,.7fr) auto auto;gap:10px;align-items:center;margin-bottom:14px}
+.list-filter-bar.compact-filter{grid-template-columns:minmax(260px,1fr) minmax(150px,.45fr) auto auto}
+.list-pager{display:flex;justify-content:space-between;align-items:center;gap:16px;padding-top:14px;margin-top:10px;border-top:1px solid var(--line);color:var(--text-secondary);font-size:10px}
+.task-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:14px}
+html[data-theme="dark"] .el-pagination .btn-prev,
+html[data-theme="dark"] .el-pagination .btn-next,
+html[data-theme="dark"] .el-pagination .el-pager li{background:#10182a!important;color:#c8d4e9!important}
+html[data-theme="dark"] .el-pagination .el-pager li.is-active{background:var(--accent)!important;color:#06111a!important}
+@media(max-width:1050px){.list-filter-bar,.list-filter-bar.compact-filter{grid-template-columns:1fr 1fr}.list-pager{align-items:flex-start;flex-direction:column}.task-summary-grid{grid-template-columns:1fr}}

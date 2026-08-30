@@ -4,15 +4,54 @@ using NovelSystem.Infrastructure.Persistence;
 
 namespace NovelSystem.Api.Endpoints;
 
-/// <summary>后台任务查询、停止、继续、失败重试、删除和结果下载 API。</summary>
+/// <summary>后台任务分页查询、停止、继续、失败重试、删除和结果下载 API。</summary>
 public static class JobEndpoints
 {
     public static IEndpointRouteBuilder MapJobEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/jobs").WithTags("Jobs");
 
-        group.MapGet("/", async (AppDbContext db) =>
-            await db.Jobs.OrderByDescending(x => x.Id).Take(200).ToListAsync());
+        group.MapGet("/", async (
+            AppDbContext db,
+            int page = 1,
+            int pageSize = 20,
+            string? type = null,
+            string? status = null,
+            string? keyword = null) =>
+        {
+            NormalizePaging(ref page, ref pageSize);
+            var query = db.Jobs.AsNoTracking();
+
+            if (!string.IsNullOrWhiteSpace(type))
+                query = query.Where(x => x.Type == type);
+
+            if (!string.IsNullOrWhiteSpace(status))
+                query = query.Where(x => x.Status == status);
+
+            if (!string.IsNullOrWhiteSpace(keyword))
+            {
+                var value = keyword.Trim();
+                query = query.Where(x =>
+                    x.Type.Contains(value) ||
+                    (x.Error != null && x.Error.Contains(value)));
+            }
+
+            var total = await query.CountAsync();
+            var items = await query
+                .OrderByDescending(x => x.Id)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            var summary = new
+            {
+                running = await db.Jobs.CountAsync(x => x.Status == "Running" || x.Status == "Queued" || x.Status == "Stopping"),
+                completed = await db.Jobs.CountAsync(x => x.Status == "Completed"),
+                failed = await db.Jobs.CountAsync(x => x.Status == "Failed")
+            };
+
+            return Results.Ok(new { items, total, page, pageSize, summary });
+        });
 
         group.MapPost("/{id:long}/stop", async (long id, AppDbContext db) =>
         {
@@ -61,9 +100,18 @@ public static class JobEndpoints
         group.MapGet("/{id:long}/download", async (long id, AppDbContext db) =>
         {
             var job = await db.Jobs.FindAsync(id);
-            return job?.Result is null || !File.Exists(job.Result)
-                ? Results.NotFound()
-                : Results.File(job.Result, "audio/mpeg", Path.GetFileName(job.Result));
+            if (job?.Result is null)
+                return Results.NotFound();
+
+            var fullPath = Path.GetFullPath(job.Result);
+            if (!File.Exists(fullPath))
+                return Results.NotFound();
+
+            return Results.File(
+                new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite),
+                "audio/mpeg",
+                Path.GetFileName(fullPath),
+                enableRangeProcessing: true);
         });
 
         return app;
@@ -87,5 +135,11 @@ public static class JobEndpoints
         await db.SaveChangesAsync();
         queue.Enqueue(new JobMessage(job.Id, job.Type, job.Payload));
         return Results.Ok(job);
+    }
+
+    private static void NormalizePaging(ref int page, ref int pageSize)
+    {
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 5, 200);
     }
 }

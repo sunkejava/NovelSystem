@@ -16,7 +16,6 @@ public static class WritingEndpoints
     {
         var group = app.MapGroup("/api/writing").WithTags("Writing");
 
-        // 写作手法学习改为后台任务，任务进度统一由 JobRecord 持久化。
         group.MapPost("/learn/{novelId:long}", async (long novelId, AppDbContext db, JobQueue queue) =>
         {
             var novel = await db.Novels.FindAsync(novelId);
@@ -40,13 +39,42 @@ public static class WritingEndpoints
             return Results.Ok(job);
         });
 
-        group.MapGet("/styles", async (AppDbContext db) =>
+        group.MapGet("/styles", async (
+            AppDbContext db,
+            int page = 1,
+            int pageSize = 12,
+            string? keyword = null) =>
         {
-            var styles = await db.WritingStyles.OrderByDescending(x => x.Id).ToListAsync();
-            var novelIds = styles.Where(x => x.NovelId.HasValue).Select(x => x.NovelId!.Value).Distinct().ToList();
-            var novels = await db.Novels.Where(x => novelIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Title);
+            NormalizePaging(ref page, ref pageSize);
 
-            return Results.Ok(styles.Select(style => new
+            var query = db.WritingStyles.AsNoTracking();
+
+            if (!string.IsNullOrWhiteSpace(keyword))
+            {
+                var value = keyword.Trim();
+                query = query.Where(style =>
+                    style.Name.Contains(value) ||
+                    style.Summary.Contains(value) ||
+                    (style.NovelId != null &&
+                     db.Novels.Any(n => n.Id == style.NovelId && n.Title.Contains(value))));
+            }
+
+            var total = await query.CountAsync();
+            var styles = await query.OrderByDescending(x => x.Id)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            var novelIds = styles.Where(x => x.NovelId.HasValue)
+                .Select(x => x.NovelId!.Value)
+                .Distinct()
+                .ToList();
+
+            var novels = await db.Novels
+                .Where(x => novelIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, x => x.Title);
+
+            var items = styles.Select(style => new
             {
                 style.Id,
                 style.NovelId,
@@ -54,8 +82,16 @@ public static class WritingEndpoints
                 style.Name,
                 style.Summary,
                 style.PromptTemplate
-            }));
+            });
+
+            return Results.Ok(new { items, total, page, pageSize });
         });
+
+        group.MapGet("/styles/options", async (AppDbContext db) =>
+            await db.WritingStyles.AsNoTracking()
+                .OrderByDescending(x => x.Id)
+                .Select(x => new { x.Id, x.Name })
+                .ToListAsync());
 
         group.MapPut("/styles/{id:long}", async (long id, UpdateWritingStyleRequest request, AppDbContext db) =>
         {
@@ -104,8 +140,32 @@ public static class WritingEndpoints
             return Results.Ok(novel);
         });
 
-        group.MapGet("/generated", async (AppDbContext db) =>
-            await db.GeneratedNovels.OrderByDescending(x => x.Id).ToListAsync());
+        group.MapGet("/generated", async (
+            AppDbContext db,
+            int page = 1,
+            int pageSize = 12,
+            string? keyword = null) =>
+        {
+            NormalizePaging(ref page, ref pageSize);
+            var query = db.GeneratedNovels.AsNoTracking();
+
+            if (!string.IsNullOrWhiteSpace(keyword))
+            {
+                var value = keyword.Trim();
+                query = query.Where(x =>
+                    x.Title.Contains(value) ||
+                    x.Prompt.Contains(value) ||
+                    x.Content.Contains(value));
+            }
+
+            var total = await query.CountAsync();
+            var items = await query.OrderByDescending(x => x.Id)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return Results.Ok(new { items, total, page, pageSize });
+        });
 
         group.MapGet("/generated/{id:long}/download", async (long id, AppDbContext db) =>
         {
@@ -127,5 +187,11 @@ public static class WritingEndpoints
         });
 
         return app;
+    }
+
+    private static void NormalizePaging(ref int page, ref int pageSize)
+    {
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 5, 200);
     }
 }

@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import {computed,onMounted,ref} from 'vue';
 import {ElMessage,ElMessageBox} from 'element-plus';
+import {Search} from '@element-plus/icons-vue';
 import {settingApi} from '../api/settings';
 import {voiceApi} from '../api/voices';
 import {useTheme,type ThemeMode} from '../composables/useTheme';
 import PageHeader from '../components/PageHeader.vue';
 import StatusBadge from '../components/StatusBadge.vue';
+import ListPager from '../components/ListPager.vue';
 
 const form=ref<Record<string,string>>({});
 const wavFiles=ref<any[]>([]);
 const profiles=ref<any[]>([]);
+const voiceTotal=ref(0);
+const voiceQuery=ref({page:1,pageSize:12,keyword:'',language:'',status:''});
 const editingId=ref<number|null>(null);
 const savingVoice=ref(false);
 const batchCreating=ref(false);
@@ -43,12 +47,23 @@ const batchVoiceForm=ref({
 const isEditing=computed(()=>editingId.value!==null);
 
 async function load(){
-  [form.value,wavFiles.value,profiles.value]=await Promise.all([
+  const [settings,wavs,voicePage]=await Promise.all([
     settingApi.get(),
     settingApi.voices(),
-    voiceApi.list()
+    voiceApi.list(voiceQuery.value)
   ]);
+  form.value=settings;
+  wavFiles.value=wavs;
+  profiles.value=voicePage.items;
+  voiceTotal.value=voicePage.total;
 }
+async function loadVoices(){
+  const result=await voiceApi.list(voiceQuery.value);
+  profiles.value=result.items;
+  voiceTotal.value=result.total;
+}
+function searchVoices(){voiceQuery.value.page=1;loadVoices();}
+function resetVoiceQuery(){voiceQuery.value={page:1,pageSize:12,keyword:'',language:'',status:''};loadVoices();}
 
 async function save(){
   await settingApi.save(form.value);
@@ -237,7 +252,7 @@ onMounted(load);
   </div>
 
   <section class="glass-panel content-card voice-manager">
-    <div class="card-head"><div><span class="eyebrow">VOICE PROFILES</span><h3>Qwen3-TTS 音色档案</h3></div><span>{{profiles.length}} PROFILES</span></div>
+    <div class="card-head"><div><span class="eyebrow">VOICE PROFILES</span><h3>Qwen3-TTS 音色档案</h3></div><span>{{voiceTotal}} PROFILES</span></div>
 
     <div class="batch-voice-panel">
       <div class="section-title compact"><span>批</span><div><h3>从本地 WAV 批量建档</h3><p>名称自动取文件名，其他字段使用下方统一默认值</p></div></div>
@@ -277,7 +292,14 @@ onMounted(load);
       </el-form>
     </div>
 
-    <el-table :data="profiles" class="cyber-table" style="margin-top:18px">
+    <div class="list-filter-bar compact-filter" style="margin-top:18px">
+      <el-input v-model="voiceQuery.keyword" clearable placeholder="搜索音色名称 / WAV / 参考文本" @keyup.enter="searchVoices"><template #prefix><el-icon><Search/></el-icon></template></el-input>
+      <el-select v-model="voiceQuery.language" clearable placeholder="全部语言"><el-option v-for="lang in languages" :key="lang" :label="lang" :value="lang"/></el-select>
+      <el-select v-model="voiceQuery.status" clearable placeholder="全部状态"><el-option v-for="s in ['Ready','PromptReady','BuildingPrompt','Failed']" :key="s" :label="s" :value="s"/></el-select>
+      <el-button class="neon-button" @click="searchVoices">查询</el-button>
+      <el-button class="ghost-button" @click="resetVoiceQuery">重置</el-button>
+    </div>
+    <el-table :data="profiles" class="cyber-table">
       <el-table-column prop="name" label="音色" min-width="150"/>
       <el-table-column prop="language" label="语言" width="100"/>
       <el-table-column label="模式" width="120"><template #default="{row}">{{row.useXVector?'X-Vector':'参考文本'}}</template></el-table-column>
@@ -292,6 +314,7 @@ onMounted(load);
         </template>
       </el-table-column>
     </el-table>
+    <ListPager v-model:page="voiceQuery.page" v-model:page-size="voiceQuery.pageSize" :total="voiceTotal" @change="loadVoices"/>
   </section>
 </div>
 </template>

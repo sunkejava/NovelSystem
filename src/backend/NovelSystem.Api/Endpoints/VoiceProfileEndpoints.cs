@@ -6,17 +6,60 @@ using NovelSystem.Infrastructure.Persistence;
 
 namespace NovelSystem.Api.Endpoints;
 
-/// <summary>
-/// Qwen3-TTS 音色档案管理 API。
-/// </summary>
+/// <summary>Qwen3-TTS 音色档案管理 API。</summary>
 public static class VoiceProfileEndpoints
 {
     public static IEndpointRouteBuilder MapVoiceProfileEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/voice-profiles").WithTags("VoiceProfiles");
 
-        group.MapGet("/", async (AppDbContext db) =>
-            await db.VoiceProfiles.OrderByDescending(x => x.Id).ToListAsync());
+        group.MapGet("/", async (
+            AppDbContext db,
+            int page = 1,
+            int pageSize = 12,
+            string? keyword = null,
+            string? language = null,
+            string? status = null) =>
+        {
+            NormalizePaging(ref page, ref pageSize);
+            var query = db.VoiceProfiles.AsNoTracking();
+
+            if (!string.IsNullOrWhiteSpace(keyword))
+            {
+                var value = keyword.Trim();
+                query = query.Where(x =>
+                    x.Name.Contains(value) ||
+                    x.ReferenceAudioFile.Contains(value) ||
+                    x.ReferenceText.Contains(value));
+            }
+
+            if (!string.IsNullOrWhiteSpace(language))
+                query = query.Where(x => x.Language == language);
+
+            if (!string.IsNullOrWhiteSpace(status))
+                query = query.Where(x => x.Status == status);
+
+            var total = await query.CountAsync();
+            var items = await query
+                .OrderByDescending(x => x.Id)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return Results.Ok(new { items, total, page, pageSize });
+        });
+
+        group.MapGet("/options", async (AppDbContext db) =>
+            await db.VoiceProfiles.AsNoTracking()
+                .OrderBy(x => x.Name)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.Name,
+                    x.Language,
+                    x.Status
+                })
+                .ToListAsync());
 
         group.MapPost("/", async (SaveVoiceProfileRequest request, AppDbContext db) =>
         {
@@ -195,5 +238,11 @@ public static class VoiceProfileEndpoints
     {
         if (!useXVector && string.IsNullOrWhiteSpace(referenceText))
             throw new BadHttpRequestException("未启用 x-vector 时必须配置参考音频文本。");
+    }
+
+    private static void NormalizePaging(ref int page, ref int pageSize)
+    {
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 5, 200);
     }
 }
