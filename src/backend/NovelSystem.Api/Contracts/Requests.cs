@@ -19,3 +19,14 @@ public sealed record SaveVoiceProfileRequest(
     string ReferenceText,
     bool UseXVector,
     string Language);
+
+/// <summary>
+/// 根据本地音色目录批量创建音色档案。
+/// 音色名称自动使用 WAV 文件名，其他字段使用本请求中的统一默认值。
+/// </summary>
+public sealed record BatchVoiceProfileRequest(
+    string ReferenceText,
+    bool UseXVector,
+    string Language,
+    bool SkipExisting = true,
+    bool BuildPrompt = false);

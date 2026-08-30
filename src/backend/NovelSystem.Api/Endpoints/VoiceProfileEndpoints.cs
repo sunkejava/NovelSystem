@@ -20,6 +20,8 @@ public static class VoiceProfileEndpoints
 
         group.MapPost("/", async (SaveVoiceProfileRequest request, AppDbContext db) =>
         {
+            ValidateRequest(request.ReferenceText, request.UseXVector);
+
             var entity = new VoiceProfile
             {
                 Name = request.Name.Trim(),
@@ -29,19 +31,109 @@ public static class VoiceProfileEndpoints
                 Language = request.Language,
                 Status = "Ready"
             };
+
             db.VoiceProfiles.Add(entity);
             await db.SaveChangesAsync();
             return Results.Ok(entity);
         });
 
+        group.MapPost("/batch", async (
+            BatchVoiceProfileRequest request,
+            AppDbContext db,
+            ITtsClient tts,
+            CancellationToken cancellationToken) =>
+        {
+            ValidateRequest(request.ReferenceText, request.UseXVector);
+
+            var directory = await db.Settings
+                .Where(x => x.Key == "VoiceDirectory")
+                .Select(x => x.Value)
+                .FirstOrDefaultAsync(cancellationToken) ?? "voices";
+
+            if (!Directory.Exists(directory))
+                return Results.BadRequest(new { message = $"音色目录不存在：{directory}" });
+
+            var files = Directory.EnumerateFiles(directory, "*.wav", SearchOption.TopDirectoryOnly)
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var created = new List<VoiceProfile>();
+            var skipped = new List<string>();
+
+            foreach (var file in files)
+            {
+                var fullPath = Path.GetFullPath(file);
+                var name = Path.GetFileNameWithoutExtension(file);
+
+                var exists = await db.VoiceProfiles.AnyAsync(
+                    x => x.ReferenceAudioFile == fullPath || x.Name == name,
+                    cancellationToken);
+
+                if (exists && request.SkipExisting)
+                {
+                    skipped.Add(name);
+                    continue;
+                }
+
+                var entity = new VoiceProfile
+                {
+                    Name = name,
+                    ReferenceAudioFile = fullPath,
+                    ReferenceText = request.ReferenceText,
+                    UseXVector = request.UseXVector,
+                    Language = request.Language,
+                    Status = "Ready"
+                };
+
+                db.VoiceProfiles.Add(entity);
+                created.Add(entity);
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+
+            var promptErrors = new List<object>();
+            if (request.BuildPrompt)
+            {
+                foreach (var entity in created)
+                {
+                    try
+                    {
+                        entity.Status = "BuildingPrompt";
+                        await db.SaveChangesAsync(cancellationToken);
+                        await tts.CreatePromptAsync(entity, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        entity.Status = "Failed";
+                        entity.UpdatedAt = DateTime.UtcNow;
+                        await db.SaveChangesAsync(cancellationToken);
+                        promptErrors.Add(new { entity.Id, entity.Name, error = ex.Message });
+                    }
+                }
+            }
+
+            return Results.Ok(new
+            {
+                scanned = files.Count,
+                created = created.Count,
+                skipped = skipped.Count,
+                createdItems = created,
+                skippedItems = skipped,
+                promptErrors
+            });
+        });
+
         group.MapPut("/{id:long}", async (long id, SaveVoiceProfileRequest request, AppDbContext db) =>
         {
+            ValidateRequest(request.ReferenceText, request.UseXVector);
+
             var entity = await db.VoiceProfiles.FindAsync(id);
             if (entity is null) return Results.NotFound();
 
-            var audioChanged = !string.Equals(entity.ReferenceAudioFile, request.ReferenceAudioFile, StringComparison.OrdinalIgnoreCase)
-                               || !string.Equals(entity.ReferenceText, request.ReferenceText, StringComparison.Ordinal)
-                               || entity.UseXVector != request.UseXVector;
+            var audioChanged =
+                !string.Equals(entity.ReferenceAudioFile, request.ReferenceAudioFile, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(entity.ReferenceText, request.ReferenceText, StringComparison.Ordinal)
+                || entity.UseXVector != request.UseXVector;
 
             entity.Name = request.Name.Trim();
             entity.ReferenceAudioFile = request.ReferenceAudioFile;
@@ -97,5 +189,11 @@ public static class VoiceProfileEndpoints
         });
 
         return app;
+    }
+
+    private static void ValidateRequest(string referenceText, bool useXVector)
+    {
+        if (!useXVector && string.IsNullOrWhiteSpace(referenceText))
+            throw new BadHttpRequestException("未启用 x-vector 时必须配置参考音频文本。");
     }
 }

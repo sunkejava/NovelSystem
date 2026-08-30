@@ -332,3 +332,147 @@ html[data-theme="light"] .empty-state p{
   .engine-status-grid{grid-template-columns:1fr}
   .model-test-row{align-items:flex-start;flex-direction:column}
 }
+
+
+/* =========================
+   Dark mode readability hardening
+   ========================= */
+html[data-theme="dark"] .el-input__wrapper,
+html[data-theme="dark"] .el-select__wrapper,
+html[data-theme="dark"] .el-textarea__inner,
+html[data-theme="dark"] .el-input-number,
+html[data-theme="dark"] .el-input-number .el-input__wrapper{
+  background:#0b1122!important;
+  border-color:#263554!important;
+  box-shadow:inset 0 0 0 1px #263554!important;
+}
+
+html[data-theme="dark"] .el-input__inner,
+html[data-theme="dark"] .el-textarea__inner,
+html[data-theme="dark"] .el-select__selected-item,
+html[data-theme="dark"] .el-input-number .el-input__inner{
+  color:#f2f7ff!important;
+  -webkit-text-fill-color:#f2f7ff!important;
+  opacity:1!important;
+}
+
+html[data-theme="dark"] .el-input__inner::placeholder,
+html[data-theme="dark"] .el-textarea__inner::placeholder,
+html[data-theme="dark"] .el-select__placeholder,
+html[data-theme="dark"] .el-input-number .el-input__inner::placeholder{
+  color:#7182a4!important;
+  -webkit-text-fill-color:#7182a4!important;
+  opacity:1!important;
+}
+
+html[data-theme="dark"] .el-form-item__label,
+html[data-theme="dark"] .el-checkbox__label,
+html[data-theme="dark"] .el-radio__label,
+html[data-theme="dark"] .el-switch__label,
+html[data-theme="dark"] .el-dialog__title,
+html[data-theme="dark"] .el-message-box__title{
+  color:#dbe7fb!important;
+}
+
+html[data-theme="dark"] .el-select-dropdown__item{
+  color:#c9d6ed!important;
+}
+html[data-theme="dark"] .el-select-dropdown__item.is-hovering{
+  color:#ffffff!important;
+  background:color-mix(in srgb,var(--accent) 14%,#11182d)!important;
+}
+html[data-theme="dark"] .el-select-dropdown__item.is-selected{
+  color:var(--accent)!important;
+  font-weight:700;
+}
+
+html[data-theme="dark"] .el-table th.el-table__cell{
+  color:#a8b7d2!important;
+}
+html[data-theme="dark"] .el-table td.el-table__cell{
+  color:#d5e0f2!important;
+}
+html[data-theme="dark"] .el-table .cell{
+  color:inherit;
+}
+html[data-theme="dark"] .el-button:not(.neon-button):not(.el-button--danger){
+  color:#cbd8ee;
+}
+html[data-theme="dark"] .el-button.is-disabled{
+  color:#64738e!important;
+}
+html[data-theme="dark"] .el-pagination button,
+html[data-theme="dark"] .el-pager li{
+  color:#c8d4e9!important;
+  background:#10182a!important;
+}
+html[data-theme="dark"] .el-empty__description p,
+html[data-theme="dark"] .el-descriptions__label,
+html[data-theme="dark"] .el-descriptions__content{
+  color:#c1cee4!important;
+}
+
+/* Batch voice profile */
+.batch-voice-panel{
+  margin-bottom:16px;
+  padding:16px;
+  border-radius:15px;
+  border:1px solid color-mix(in srgb,var(--accent) 18%,var(--line));
+  background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 5%,var(--surface-soft)),var(--surface-soft));
+}
+.section-title.compact{margin-bottom:12px}
+.section-title.compact>span{width:36px;height:36px}
+.batch-voice-panel .el-form-item{margin-bottom:12px}
+
+/* Job checkpoint / failure detail */
+.checkpoint-text{
+  margin-top:5px;
+  font-size:9px;
+  letter-spacing:.4px;
+  color:var(--text-secondary);
+}
+.error-link{
+  max-width:100%;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  border:0;
+  padding:0;
+  background:transparent;
+  color:var(--danger);
+  cursor:pointer;
+  text-align:left;
+}
+.error-link span{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.error-link:hover{color:color-mix(in srgb,var(--danger) 70%,white)}
+.error-detail{
+  margin:0;
+  padding:16px;
+  max-height:440px;
+  overflow:auto;
+  white-space:pre-wrap;
+  word-break:break-word;
+  border-radius:12px;
+  border:1px solid var(--line);
+  background:var(--control-bg);
+  color:var(--text-strong);
+  line-height:1.65;
+  font-size:12px;
+}
+.muted-text{color:var(--text-secondary)}
+
+/* Explicit dark dialog/control inheritance */
+html[data-theme="dark"] .el-dialog,
+html[data-theme="dark"] .el-message-box,
+html[data-theme="dark"] .el-select__popper,
+html[data-theme="dark"] .el-popper{
+  --el-text-color-primary:#f0f5ff;
+  --el-text-color-regular:#c2cee2;
+  --el-text-color-secondary:#8fa0bd;
+  --el-fill-color-blank:#10172a;
+  --el-bg-color-overlay:#10172a;
+}

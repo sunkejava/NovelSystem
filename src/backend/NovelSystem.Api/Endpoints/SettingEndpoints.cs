@@ -45,12 +45,14 @@ public static class SettingEndpoints
             var settings = db.Settings.ToDictionary(x => x.Key, x => x.Value);
             var baseUrl = settings.GetValueOrDefault("AiBaseUrl", "http://127.0.0.1:8080/v1").TrimEnd('/');
             var model = settings.GetValueOrDefault("AiModel", "local-model");
+            var timeoutText = settings.GetValueOrDefault("AiTimeoutSeconds", "120");
+            var timeoutSeconds = int.TryParse(timeoutText, out var timeout) ? Math.Clamp(timeout, 10, 3600) : 120;
             var sw = Stopwatch.StartNew();
 
             try
             {
                 using var client = factory.CreateClient();
-                client.Timeout = TimeSpan.FromSeconds(30);
+                client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
                 using var response = await client.PostAsJsonAsync(
                     $"{baseUrl}/chat/completions",
                     new

@@ -5,7 +5,6 @@ namespace NovelSystem.Infrastructure.Persistence;
 
 /// <summary>
 /// 初始化数据库、默认配置以及轻量级 SQLite 结构升级。
-/// 正式生产环境后续可切换到 EF Core Migrations。
 /// </summary>
 public static class DatabaseInitializer
 {
@@ -13,11 +12,14 @@ public static class DatabaseInitializer
     {
         await db.Database.EnsureCreatedAsync(cancellationToken);
         await EnsureVoiceProfileSchemaAsync(db, cancellationToken);
+        await EnsureJobCheckpointSchemaAsync(db, cancellationToken);
 
         var defaults = new Dictionary<string, string>
         {
             ["AiBaseUrl"] = "http://127.0.0.1:8080/v1",
             ["AiModel"] = "local-model",
+            ["AiTimeoutSeconds"] = "120",
+            ["AiChunkSize"] = "12000",
             ["TtsBaseUrl"] = "http://127.0.0.1:8000",
             ["TtsUploadEndpoint"] = "/gradio_api/upload",
             ["TtsVoiceCloneSubmitEndpoint"] = "/gradio_api/call/v2/run_voice_clone",
@@ -57,18 +59,36 @@ public static class DatabaseInitializer
             );
             """, cancellationToken);
 
-        var columns = new List<string>();
-        await using (var command = db.Database.GetDbConnection().CreateCommand())
-        {
-            if (command.Connection!.State != System.Data.ConnectionState.Open)
-                await command.Connection.OpenAsync(cancellationToken);
-            command.CommandText = "PRAGMA table_info('Characters');";
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-                columns.Add(reader.GetString(1));
-        }
+        var characterColumns = await GetColumnsAsync(db, "Characters", cancellationToken);
+        if (!characterColumns.Contains("VoiceProfileId", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("ALTER TABLE "Characters" ADD COLUMN "VoiceProfileId" INTEGER NULL;", cancellationToken);
+    }
 
-        if (!columns.Contains("VoiceProfileId", StringComparer.OrdinalIgnoreCase))
-            await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Characters\" ADD COLUMN \"VoiceProfileId\" INTEGER NULL;", cancellationToken);
+    private static async Task EnsureJobCheckpointSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
+        var columns = await GetColumnsAsync(db, "Jobs", cancellationToken);
+
+        if (!columns.Contains("Checkpoint", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("ALTER TABLE "Jobs" ADD COLUMN "Checkpoint" INTEGER NOT NULL DEFAULT 0;", cancellationToken);
+        if (!columns.Contains("TotalSteps", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("ALTER TABLE "Jobs" ADD COLUMN "TotalSteps" INTEGER NOT NULL DEFAULT 0;", cancellationToken);
+        if (!columns.Contains("RetryCount", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("ALTER TABLE "Jobs" ADD COLUMN "RetryCount" INTEGER NOT NULL DEFAULT 0;", cancellationToken);
+    }
+
+    private static async Task<List<string>> GetColumnsAsync(AppDbContext db, string tableName, CancellationToken cancellationToken)
+    {
+        var columns = new List<string>();
+        await using var command = db.Database.GetDbConnection().CreateCommand();
+
+        if (command.Connection!.State != System.Data.ConnectionState.Open)
+            await command.Connection.OpenAsync(cancellationToken);
+
+        command.CommandText = $"PRAGMA table_info('{tableName}');";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            columns.Add(reader.GetString(1));
+
+        return columns;
     }
 }

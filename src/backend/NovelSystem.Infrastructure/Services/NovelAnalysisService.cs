@@ -7,11 +7,9 @@ using NovelSystem.Infrastructure.Persistence;
 
 namespace NovelSystem.Infrastructure.Services;
 
-/// <summary>负责长小说分块解析、人物去重、脚本顺序化和持久化。</summary>
+/// <summary>负责长小说分块解析、人物去重、脚本顺序化和断点续跑。</summary>
 public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient) : INovelAnalysisService
 {
-    private const int ChunkSize = 12000;
-
     public async Task AnalyzeAsync(long novelId, long jobId, CancellationToken cancellationToken = default)
     {
         var novel = await db.Novels.FindAsync([novelId], cancellationToken)
@@ -19,22 +17,26 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
         var job = await db.Jobs.FindAsync([jobId], cancellationToken)
                   ?? throw new InvalidOperationException("任务不存在。");
 
-        // 解析任务继续时从头重建，确保人物/脚本不会重复。
-        if (job.Progress > 0)
-        {
-            db.ScriptLines.RemoveRange(db.ScriptLines.Where(x => x.NovelId == novelId));
-            db.Characters.RemoveRange(db.Characters.Where(x => x.NovelId == novelId));
-            job.Progress = 0;
-            await db.SaveChangesAsync(cancellationToken);
-        }
+        var chunkText = db.Settings.FirstOrDefault(x => x.Key == "AiChunkSize")?.Value ?? "12000";
+        var chunkSize = int.TryParse(chunkText, out var configured)
+            ? Math.Clamp(configured, 1000, 100000)
+            : 12000;
 
         novel.Status = NovelStatus.Analyzing;
         await db.SaveChangesAsync(cancellationToken);
 
-        var chunks = Split(novel.Content).ToList();
-        var scriptOrder = 0;
+        var chunks = Split(novel.Content, chunkSize).ToList();
+        job.TotalSteps = chunks.Count;
 
-        for (var index = 0; index < chunks.Count; index++)
+        // Checkpoint 表示已经完成的块数，失败重试时从该位置继续。
+        var startIndex = Math.Clamp(job.Checkpoint, 0, chunks.Count);
+        var scriptOrder = await db.ScriptLines
+            .Where(x => x.NovelId == novelId)
+            .Select(x => x.Order)
+            .DefaultIfEmpty(0)
+            .MaxAsync(cancellationToken);
+
+        for (var index = startIndex; index < chunks.Count; index++)
         {
             await db.Entry(job).ReloadAsync(cancellationToken);
             if (job.Status == "Stopping")
@@ -51,8 +53,12 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
 
             foreach (var item in result.Characters.Where(x => !string.IsNullOrWhiteSpace(x.Name)))
             {
-                var exists = await db.Characters.AnyAsync(x => x.NovelId == novelId && x.Name == item.Name, cancellationToken);
+                var exists = await db.Characters.AnyAsync(
+                    x => x.NovelId == novelId && x.Name == item.Name,
+                    cancellationToken);
+
                 if (!exists)
+                {
                     db.Characters.Add(new Character
                     {
                         NovelId = novelId,
@@ -61,6 +67,7 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                         Personality = item.Personality,
                         Description = item.Description
                     });
+                }
             }
 
             await db.SaveChangesAsync(cancellationToken);
@@ -82,19 +89,21 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                 });
             }
 
-            job.Progress = (int)Math.Round((index + 1) * 100d / chunks.Count);
+            job.Checkpoint = index + 1;
+            job.Progress = (int)Math.Round(job.Checkpoint * 100d / Math.Max(chunks.Count, 1));
             await db.SaveChangesAsync(cancellationToken);
         }
 
         novel.Status = NovelStatus.Analyzed;
         job.Progress = 100;
+        job.Checkpoint = chunks.Count;
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    private static IEnumerable<string> Split(string text)
+    private static IEnumerable<string> Split(string text, int chunkSize)
     {
-        for (var i = 0; i < text.Length; i += ChunkSize)
-            yield return text.Substring(i, Math.Min(ChunkSize, text.Length - i));
+        for (var i = 0; i < text.Length; i += chunkSize)
+            yield return text.Substring(i, Math.Min(chunkSize, text.Length - i));
     }
 
     private static string NormalizeJson(string value)

@@ -8,12 +8,13 @@ using NovelSystem.Infrastructure.Persistence;
 
 namespace NovelSystem.Infrastructure.Jobs;
 
-/// <summary>执行小说解析、TTS 音频生成，并在服务启动时恢复未完成任务。</summary>
+/// <summary>执行小说解析、TTS 音频生成，并支持停止、继续和失败断点重试。</summary>
 public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await RecoverPendingJobsAsync(stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             var message = await queue.DequeueAsync(stoppingToken);
@@ -25,10 +26,19 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var pending = await db.Jobs.Where(x => x.Status == "Queued" || x.Status == "Running" || x.Status == "Stopping").ToListAsync(cancellationToken);
+        var pending = await db.Jobs
+            .Where(x => x.Status == "Queued" || x.Status == "Running" || x.Status == "Stopping")
+            .ToListAsync(cancellationToken);
 
         foreach (var job in pending.Where(x => !string.IsNullOrWhiteSpace(x.Payload)))
         {
+            if (job.Status == "Stopping")
+            {
+                job.Status = "Stopped";
+                job.FinishedAt = DateTime.UtcNow;
+                continue;
+            }
+
             job.Status = "Queued";
             queue.Enqueue(new JobMessage(job.Id, job.Type, job.Payload!));
         }
@@ -41,7 +51,10 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var job = await db.Jobs.FindAsync([message.JobId], cancellationToken);
-        if (job is null || job.Status == "Stopped") return;
+
+        if (job is null || job.Status == "Stopped")
+            return;
+
         if (job.Status == "Stopping")
         {
             job.Status = "Stopped";
@@ -93,9 +106,16 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         CancellationToken cancellationToken)
     {
         var tts = services.GetRequiredService<ITtsClient>();
-        var lines = await db.ScriptLines.Where(x => x.NovelId == novelId).OrderBy(x => x.Order).ToListAsync(cancellationToken);
+        var lines = await db.ScriptLines
+            .Where(x => x.NovelId == novelId)
+            .OrderBy(x => x.Order)
+            .ToListAsync(cancellationToken);
+
         if (lines.Count == 0)
             throw new InvalidOperationException("请先完成小说 AI 解析。");
+
+        job.TotalSteps = lines.Count;
+        await db.SaveChangesAsync(cancellationToken);
 
         var files = new List<string>();
 
@@ -107,10 +127,13 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
 
             var line = lines[index];
 
-            // 继续任务时复用之前已经生成成功的片段。
-            if (line.Status == "Completed" && !string.IsNullOrWhiteSpace(line.AudioFile) && File.Exists(line.AudioFile))
+            // 已成功并且文件仍存在的片段直接复用，实现断点重试。
+            if (line.Status == "Completed" &&
+                !string.IsNullOrWhiteSpace(line.AudioFile) &&
+                File.Exists(line.AudioFile))
             {
                 files.Add(line.AudioFile);
+                job.Checkpoint = Math.Max(job.Checkpoint, index + 1);
                 job.Progress = (int)Math.Round((index + 1) * 90d / lines.Count);
                 continue;
             }
@@ -131,10 +154,17 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
             line.AudioFile = output;
             line.Status = "Completed";
             files.Add(output);
+
+            job.Checkpoint = index + 1;
             job.Progress = (int)Math.Round((index + 1) * 90d / lines.Count);
             await db.SaveChangesAsync(cancellationToken);
         }
 
-        job.Result = await tts.MergeToMp3Async(files, $"storage/output/novel-{novelId}.mp3", cancellationToken);
+        job.Result = await tts.MergeToMp3Async(
+            files,
+            $"storage/output/novel-{novelId}.mp3",
+            cancellationToken);
+
+        job.Checkpoint = lines.Count;
     }
 }

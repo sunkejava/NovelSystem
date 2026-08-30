@@ -12,6 +12,7 @@ const wavFiles=ref<any[]>([]);
 const profiles=ref<any[]>([]);
 const editingId=ref<number|null>(null);
 const savingVoice=ref(false);
+const batchCreating=ref(false);
 const testingAi=ref(false);
 const testingTts=ref(false);
 const aiTest=ref<any>(null);
@@ -27,6 +28,14 @@ const voiceForm=ref({
   referenceText:'',
   useXVector:false,
   language:'Chinese'
+});
+
+const batchVoiceForm=ref({
+  referenceText:'',
+  useXVector:true,
+  language:'Chinese',
+  skipExisting:true,
+  buildPrompt:false
 });
 
 const isEditing=computed(()=>editingId.value!==null);
@@ -101,6 +110,16 @@ async function saveVoice(){
   }finally{savingVoice.value=false;}
 }
 
+async function batchCreateVoices(){
+  batchCreating.value=true;
+  try{
+    const result=await voiceApi.batchCreate(batchVoiceForm.value);
+    ElMessage.success('扫描 '+result.scanned+' 个 WAV，新建 '+result.created+' 个，跳过 '+result.skipped+' 个');
+    if(result.promptErrors?.length) ElMessage.warning('其中 '+result.promptErrors.length+' 个 Prompt 生成失败，可稍后单独重试');
+    await load();
+  }finally{batchCreating.value=false;}
+}
+
 async function buildPrompt(row:any){
   ElMessage.info('正在调用 Qwen3-TTS 生成 Prompt...');
   await voiceApi.buildPrompt(row.id);
@@ -130,6 +149,14 @@ onMounted(load);
       <el-form label-position="top">
         <el-form-item label="API Base URL"><el-input v-model="form.AiBaseUrl"/></el-form-item>
         <el-form-item label="Model / Alias"><el-input v-model="form.AiModel"/></el-form-item>
+        <div class="endpoint-grid">
+          <el-form-item label="请求超时（秒）">
+            <el-input v-model="form.AiTimeoutSeconds" type="number" placeholder="120"/>
+          </el-form-item>
+          <el-form-item label="小说自动拆分长度（字符）">
+            <el-input v-model="form.AiChunkSize" type="number" placeholder="12000"/>
+          </el-form-item>
+        </div>
       </el-form>
       <div class="model-test-row">
         <el-button class="ghost-button" :loading="testingAi" @click="testAi">测试 LLM 连接</el-button>
@@ -191,6 +218,22 @@ onMounted(load);
 
   <section class="glass-panel content-card voice-manager">
     <div class="card-head"><div><span class="eyebrow">VOICE PROFILES</span><h3>Qwen3-TTS 音色档案</h3></div><span>{{profiles.length}} PROFILES</span></div>
+
+    <div class="batch-voice-panel">
+      <div class="section-title compact"><span>批</span><div><h3>从本地 WAV 批量建档</h3><p>名称自动取文件名，其他字段使用下方统一默认值</p></div></div>
+      <el-form label-position="top">
+        <div class="voice-form-grid">
+          <el-form-item label="默认语言"><el-select v-model="batchVoiceForm.language" class="full-width"><el-option v-for="lang in languages" :key="lang" :label="lang" :value="lang"/></el-select></el-form-item>
+          <el-form-item label="仅使用 x-vector"><el-switch v-model="batchVoiceForm.useXVector"/></el-form-item>
+          <el-form-item label="跳过已存在档案"><el-switch v-model="batchVoiceForm.skipExisting"/></el-form-item>
+          <el-form-item label="建档后生成 Prompt"><el-switch v-model="batchVoiceForm.buildPrompt"/></el-form-item>
+        </div>
+        <el-form-item label="统一参考文本（仅在未启用 x-vector 时需要）">
+          <el-input v-model="batchVoiceForm.referenceText" type="textarea" :rows="2" placeholder="如果每个音频内容不同，建议保持 x-vector 模式，建档后再逐个补充准确参考文本"/>
+        </el-form-item>
+        <div class="voice-editor-actions"><el-button class="neon-button" :loading="batchCreating" @click="batchCreateVoices">扫描目录并批量建档</el-button></div>
+      </el-form>
+    </div>
 
     <div class="voice-editor">
       <el-form label-position="top">
