@@ -12,6 +12,10 @@ const wavFiles=ref<any[]>([]);
 const profiles=ref<any[]>([]);
 const editingId=ref<number|null>(null);
 const savingVoice=ref(false);
+const testingAi=ref(false);
+const testingTts=ref(false);
+const aiTest=ref<any>(null);
+const ttsTest=ref<any>(null);
 const {mode,accent,setMode,setAccent}=useTheme();
 
 const accents=['#43e8ff','#5979ff','#7c6cff','#a855f7','#ff4fd8','#21d19f','#ff9f43'];
@@ -39,6 +43,26 @@ async function save(){
   await settingApi.save(form.value);
   ElMessage.success('模型与运行参数已保存');
   await load();
+}
+
+async function testAi(){
+  testingAi.value=true;
+  try{
+    await settingApi.save(form.value);
+    aiTest.value=await settingApi.testAi();
+    if(aiTest.value.online) ElMessage.success('LLM 连接成功，响应 '+aiTest.value.latencyMs+' ms');
+    else ElMessage.error('LLM 连接失败：'+(aiTest.value.error||'未知错误'));
+  }finally{testingAi.value=false;}
+}
+
+async function testTts(){
+  testingTts.value=true;
+  try{
+    await settingApi.save(form.value);
+    ttsTest.value=await settingApi.testTts();
+    if(ttsTest.value.online) ElMessage.success('Qwen3-TTS 服务在线，响应 '+ttsTest.value.latencyMs+' ms');
+    else ElMessage.error('Qwen3-TTS 连接失败：'+(ttsTest.value.error||'未知错误'));
+  }finally{testingTts.value=false;}
 }
 
 function resetVoice(){
@@ -107,6 +131,14 @@ onMounted(load);
         <el-form-item label="API Base URL"><el-input v-model="form.AiBaseUrl"/></el-form-item>
         <el-form-item label="Model / Alias"><el-input v-model="form.AiModel"/></el-form-item>
       </el-form>
+      <div class="model-test-row">
+        <el-button class="ghost-button" :loading="testingAi" @click="testAi">测试 LLM 连接</el-button>
+        <div v-if="aiTest" class="test-result" :class="{online:aiTest.online}">
+          <span class="engine-led"></span>
+          <b>{{aiTest.online?'连接正常':'连接失败'}}</b>
+          <small>{{aiTest.model}} · {{aiTest.latencyMs}} ms</small>
+        </div>
+      </div>
     </section>
 
     <section class="glass-panel content-card">
@@ -136,6 +168,14 @@ onMounted(load);
         <el-form-item label="Prompt Generate 提交"><el-input v-model="form.TtsPromptGenSubmitEndpoint"/></el-form-item>
         <el-form-item label="Prompt Generate 结果"><el-input v-model="form.TtsPromptGenResultEndpoint"/></el-form-item>
       </el-form>
+      <div class="model-test-row">
+        <el-button class="ghost-button" :loading="testingTts" @click="testTts">测试 Qwen3-TTS</el-button>
+        <div v-if="ttsTest" class="test-result" :class="{online:ttsTest.online}">
+          <span class="engine-led"></span>
+          <b>{{ttsTest.online?'服务在线':'服务离线'}}</b>
+          <small>{{ttsTest.latencyMs}} ms</small>
+        </div>
+      </div>
     </section>
 
     <section class="glass-panel content-card">

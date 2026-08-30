@@ -25,12 +25,14 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var pending = await db.Jobs.Where(x => x.Status == "Queued" || x.Status == "Running").ToListAsync(cancellationToken);
+        var pending = await db.Jobs.Where(x => x.Status == "Queued" || x.Status == "Running" || x.Status == "Stopping").ToListAsync(cancellationToken);
+
         foreach (var job in pending.Where(x => !string.IsNullOrWhiteSpace(x.Payload)))
         {
             job.Status = "Queued";
             queue.Enqueue(new JobMessage(job.Id, job.Type, job.Payload!));
         }
+
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -39,18 +41,27 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var job = await db.Jobs.FindAsync([message.JobId], cancellationToken);
-        if (job is null) return;
+        if (job is null || job.Status == "Stopped") return;
+        if (job.Status == "Stopping")
+        {
+            job.Status = "Stopped";
+            job.FinishedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            return;
+        }
 
         try
         {
             job.Status = "Running";
-            job.StartedAt = DateTime.UtcNow;
+            job.StartedAt ??= DateTime.UtcNow;
             job.Error = null;
             await db.SaveChangesAsync(cancellationToken);
 
             var novelId = JsonDocument.Parse(message.Payload).RootElement.GetProperty("novelId").GetInt64();
+
             if (message.Type == "AnalyzeNovel")
-                await scope.ServiceProvider.GetRequiredService<INovelAnalysisService>().AnalyzeAsync(novelId, job.Id, cancellationToken);
+                await scope.ServiceProvider.GetRequiredService<INovelAnalysisService>()
+                    .AnalyzeAsync(novelId, job.Id, cancellationToken);
             else if (message.Type == "GenerateAudio")
                 await GenerateAudioAsync(scope.ServiceProvider, db, job, novelId, cancellationToken);
 
@@ -59,12 +70,18 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
             job.FinishedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(cancellationToken);
         }
+        catch (OperationCanceledException ex) when (ex.Message.Contains("用户停止"))
+        {
+            job.Status = "Stopped";
+            job.FinishedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
         catch (Exception ex)
         {
             job.Status = "Failed";
             job.Error = ex.ToString();
             job.FinishedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(cancellationToken);
+            await db.SaveChangesAsync(CancellationToken.None);
         }
     }
 
@@ -81,9 +98,23 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
             throw new InvalidOperationException("请先完成小说 AI 解析。");
 
         var files = new List<string>();
+
         for (var index = 0; index < lines.Count; index++)
         {
+            await db.Entry(job).ReloadAsync(cancellationToken);
+            if (job.Status == "Stopping")
+                throw new OperationCanceledException("任务已由用户停止。");
+
             var line = lines[index];
+
+            // 继续任务时复用之前已经生成成功的片段。
+            if (line.Status == "Completed" && !string.IsNullOrWhiteSpace(line.AudioFile) && File.Exists(line.AudioFile))
+            {
+                files.Add(line.AudioFile);
+                job.Progress = (int)Math.Round((index + 1) * 90d / lines.Count);
+                continue;
+            }
+
             var character = line.CharacterId is null
                 ? null
                 : await db.Characters.FindAsync([line.CharacterId.Value], cancellationToken);
