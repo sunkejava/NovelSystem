@@ -567,3 +567,54 @@ html[data-theme="light"] audio{color-scheme:light}
   .merged-audio-card{grid-template-columns:1fr}
   .audio-toolbar{align-items:flex-start;flex-direction:column}
 }
+
+
+/* =========================
+   Task timing / ETA
+   ========================= */
+.job-time-grid{
+  display:grid;
+  grid-template-columns:44px minmax(150px,1fr);
+  gap:4px 8px;
+  align-items:center;
+  line-height:1.5;
+}
+.job-time-grid span{
+  color:var(--text-secondary);
+  font-size:9px;
+  letter-spacing:.4px;
+}
+.job-time-grid b{
+  color:var(--text-strong);
+  font-size:10px;
+  font-weight:500;
+}
+.job-time-grid .time-emphasis{
+  color:var(--accent);
+  font-weight:700;
+}
+.eta-panel{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  min-height:58px;
+  justify-content:center;
+  padding:8px 10px;
+  border-radius:10px;
+  border:1px solid var(--line);
+  background:var(--surface-soft);
+}
+.eta-panel.active{
+  border-color:color-mix(in srgb,var(--accent) 26%,var(--line));
+  background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 7%,var(--surface-soft)),var(--surface-soft));
+  box-shadow:inset 0 0 18px color-mix(in srgb,var(--accent) 4%,transparent);
+}
+.eta-panel strong{
+  color:var(--text-strong);
+  font-size:11px;
+}
+.eta-panel.active strong{color:var(--accent)}
+.eta-panel small{
+  color:var(--text-secondary);
+  font-size:9px;
+}

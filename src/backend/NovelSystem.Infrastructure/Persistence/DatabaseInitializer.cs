@@ -74,6 +74,12 @@ public static class DatabaseInitializer
             await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "TotalSteps" INTEGER NOT NULL DEFAULT 0;""", cancellationToken);
         if (!columns.Contains("RetryCount", StringComparer.OrdinalIgnoreCase))
             await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "RetryCount" INTEGER NOT NULL DEFAULT 0;""", cancellationToken);
+        if (!columns.Contains("ElapsedMilliseconds", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "ElapsedMilliseconds" INTEGER NOT NULL DEFAULT 0;""", cancellationToken);
+        if (!columns.Contains("AverageStepMilliseconds", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "AverageStepMilliseconds" INTEGER NOT NULL DEFAULT 0;""", cancellationToken);
+        if (!columns.Contains("EstimatedCompletionAt", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "EstimatedCompletionAt" TEXT NULL;""", cancellationToken);
     }
 
     private static async Task<List<string>> GetColumnsAsync(AppDbContext db, string tableName, CancellationToken cancellationToken)

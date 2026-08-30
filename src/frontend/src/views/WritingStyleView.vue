@@ -57,7 +57,15 @@ onUnmounted(()=>timer&&clearInterval(timer));
           <div class="checkpoint-text">步骤 {{row.checkpoint||0}} / {{row.totalSteps||0}}</div>
         </template>
       </el-table-column>
-      <el-table-column prop="createdAt" label="创建时间" width="200"/>
+      <el-table-column label="开始时间" width="190">
+        <template #default="{row}">{{row.startedAt?new Date(row.startedAt).toLocaleString():'—'}}</template>
+      </el-table-column>
+      <el-table-column label="预计完成" width="190">
+        <template #default="{row}">{{row.estimatedCompletionAt?new Date(row.estimatedCompletionAt).toLocaleString():(row.status==='Running'?'计算中':'—')}}</template>
+      </el-table-column>
+      <el-table-column label="已耗时" width="120">
+        <template #default="{row}">{{row.elapsedMilliseconds?Math.max(1,Math.round(row.elapsedMilliseconds/1000))+' 秒':'—'}}</template>
+      </el-table-column>
       <el-table-column label="异常" min-width="260">
         <template #default="{row}">
           <span v-if="row.status==='Failed'" class="danger-text">{{(row.error||'未知异常').split('\n')[0]}}</span>

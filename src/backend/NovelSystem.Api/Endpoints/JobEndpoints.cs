@@ -81,6 +81,7 @@ public static class JobEndpoints
         job.Status = "Queued";
         job.Error = null;
         job.FinishedAt = null;
+        job.EstimatedCompletionAt = null;
         if (isRetry) job.RetryCount++;
 
         await db.SaveChangesAsync();

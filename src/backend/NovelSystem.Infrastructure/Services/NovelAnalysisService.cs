@@ -4,6 +4,7 @@ using NovelSystem.Application.Contracts;
 using NovelSystem.Application.Models;
 using NovelSystem.Domain.Entities;
 using NovelSystem.Infrastructure.Persistence;
+using NovelSystem.Infrastructure.Jobs;
 
 namespace NovelSystem.Infrastructure.Services;
 
@@ -91,12 +92,14 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
 
             job.Checkpoint = index + 1;
             job.Progress = (int)Math.Round(job.Checkpoint * 100d / Math.Max(chunks.Count, 1));
+            JobTimingCalculator.Refresh(job);
             await db.SaveChangesAsync(cancellationToken);
         }
 
         novel.Status = NovelStatus.Analyzed;
         job.Progress = 100;
         job.Checkpoint = chunks.Count;
+        JobTimingCalculator.Refresh(job);
         await db.SaveChangesAsync(cancellationToken);
     }
 

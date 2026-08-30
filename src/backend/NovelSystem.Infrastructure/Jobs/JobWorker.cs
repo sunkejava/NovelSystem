@@ -38,7 +38,7 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
             if (job.Status == "Stopping")
             {
                 job.Status = "Stopped";
-                job.FinishedAt = DateTime.UtcNow;
+                JobTimingCalculator.MarkTerminal(job);
                 continue;
             }
 
@@ -61,7 +61,7 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         if (job.Status == "Stopping")
         {
             job.Status = "Stopped";
-            job.FinishedAt = DateTime.UtcNow;
+            JobTimingCalculator.MarkTerminal(job);
             await db.SaveChangesAsync(cancellationToken);
             return;
         }
@@ -70,7 +70,9 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         {
             job.Status = "Running";
             job.StartedAt ??= DateTime.UtcNow;
+            job.FinishedAt = null;
             job.Error = null;
+            JobTimingCalculator.Refresh(job);
             await db.SaveChangesAsync(cancellationToken);
 
             using var payload = JsonDocument.Parse(message.Payload);
@@ -117,20 +119,20 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
 
             job.Status = "Completed";
             job.Progress = 100;
-            job.FinishedAt = DateTime.UtcNow;
+            JobTimingCalculator.MarkTerminal(job);
             await db.SaveChangesAsync(cancellationToken);
         }
         catch (OperationCanceledException ex) when (ex.Message.Contains("用户停止"))
         {
             job.Status = "Stopped";
-            job.FinishedAt = DateTime.UtcNow;
+            JobTimingCalculator.MarkTerminal(job);
             await db.SaveChangesAsync(CancellationToken.None);
         }
         catch (Exception ex)
         {
             job.Status = "Failed";
             job.Error = ex.ToString();
-            job.FinishedAt = DateTime.UtcNow;
+            JobTimingCalculator.MarkTerminal(job);
             await db.SaveChangesAsync(CancellationToken.None);
         }
     }
@@ -168,6 +170,7 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
                 files.Add(line.AudioFile);
                 job.Checkpoint = Math.Max(job.Checkpoint, index + 1);
                 job.Progress = (int)Math.Round((index + 1) * 90d / lines.Count);
+                JobTimingCalculator.Refresh(job);
                 continue;
             }
 
@@ -176,6 +179,7 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
 
             job.Checkpoint = index + 1;
             job.Progress = (int)Math.Round((index + 1) * 90d / lines.Count);
+            JobTimingCalculator.Refresh(job);
             await db.SaveChangesAsync(cancellationToken);
         }
 
@@ -186,6 +190,7 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
 
         job.Checkpoint = lines.Count + 1;
         job.Progress = 100;
+        JobTimingCalculator.Refresh(job);
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -215,6 +220,7 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         job.Checkpoint = 1;
         job.Progress = 100;
         job.Result = line.AudioFile;
+        JobTimingCalculator.Refresh(job);
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -268,6 +274,7 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
 
         job.TotalSteps = 1;
         job.Progress = 30;
+        JobTimingCalculator.Refresh(job);
         await db.SaveChangesAsync(cancellationToken);
 
         job.Result = await tts.MergeToMp3Async(
@@ -277,6 +284,7 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
 
         job.Checkpoint = 1;
         job.Progress = 100;
+        JobTimingCalculator.Refresh(job);
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -332,6 +340,7 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
             job.Result = JsonSerializer.Serialize(partials);
             job.Checkpoint = index + 1;
             job.Progress = (int)Math.Round((index + 1) * 90d / Math.Max(chunks.Count, 1));
+            JobTimingCalculator.Refresh(job);
             await db.SaveChangesAsync(cancellationToken);
         }
 
@@ -354,6 +363,7 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         db.WritingStyles.Add(style);
         job.Checkpoint = chunks.Count + 1;
         job.Progress = 100;
+        JobTimingCalculator.Refresh(job);
         await db.SaveChangesAsync(cancellationToken);
 
         job.Result = $"style:{style.Id}";
