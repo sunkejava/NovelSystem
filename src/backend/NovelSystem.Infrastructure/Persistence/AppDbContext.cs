@@ -15,6 +15,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<GeneratedNovel> GeneratedNovels => Set<GeneratedNovel>();
     public DbSet<VoiceProfile> VoiceProfiles => Set<VoiceProfile>();
     public DbSet<AiTokenUsage> AiTokenUsages => Set<AiTokenUsage>();
+    public DbSet<AiAnalysisError> AiAnalysisErrors => Set<AiAnalysisError>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -24,6 +25,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.Entity<VoiceProfile>().HasIndex(x => x.Name);
         modelBuilder.Entity<AiTokenUsage>().HasIndex(x => new { x.NovelId, x.JobId, x.Operation });
         modelBuilder.Entity<AiTokenUsage>().HasIndex(x => x.CreatedAt);
+        modelBuilder.Entity<AiAnalysisError>().HasIndex(x => new { x.NovelId, x.JobId, x.ChunkIndex });
+        modelBuilder.Entity<AiAnalysisError>().HasIndex(x => x.CreatedAt);
         base.OnModelCreating(modelBuilder);
     }
 }

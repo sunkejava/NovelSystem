@@ -15,6 +15,10 @@ public static class DatabaseInitializer
         await EnsureNovelNarratorVoiceSchemaAsync(db, cancellationToken);
         await EnsureJobCheckpointSchemaAsync(db, cancellationToken);
         await EnsureAiTokenUsageSchemaAsync(db, cancellationToken);
+        await EnsureAiTokenUsageEstimatedSchemaAsync(db, cancellationToken);
+        await EnsureVoiceSemanticSchemaAsync(db, cancellationToken);
+        await EnsureAiAnalysisErrorSchemaAsync(db, cancellationToken);
+        await EnsureGeneratedNovelSchemaAsync(db, cancellationToken);
 
         var defaults = new Dictionary<string, string>
         {
@@ -27,6 +31,10 @@ public static class DatabaseInitializer
             ["AiEnableThinking"] = "false",
             ["AiUseJsonResponseFormat"] = "false",
             ["AiAnalysisMaxTokens"] = "16384",
+            ["AiProvider"] = "LocalLlamaCpp",
+            ["AiApiKey"] = "",
+            ["AiStyleChunkSize"] = "16000",
+            ["AiStyleSampleChunks"] = "12",
             ["TtsBaseUrl"] = "http://127.0.0.1:8000",
             ["TtsUploadEndpoint"] = "/gradio_api/upload",
             ["TtsVoiceCloneSubmitEndpoint"] = "/gradio_api/call/v2/run_voice_clone",
@@ -129,6 +137,63 @@ public static class DatabaseInitializer
             CREATE INDEX IF NOT EXISTS "IX_AiTokenUsages_CreatedAt"
                 ON "AiTokenUsages" ("CreatedAt");
             """, cancellationToken);
+    }
+
+
+    private static async Task EnsureAiTokenUsageEstimatedSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
+        var columns = await GetColumnsAsync(db, "AiTokenUsages", cancellationToken);
+        if (!columns.Contains("IsEstimated", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync(
+                """ALTER TABLE "AiTokenUsages" ADD COLUMN "IsEstimated" INTEGER NOT NULL DEFAULT 0;""",
+                cancellationToken);
+    }
+
+    private static async Task EnsureVoiceSemanticSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
+        var columns = await GetColumnsAsync(db, "VoiceProfiles", cancellationToken);
+        if (!columns.Contains("VoiceDescription", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "VoiceProfiles" ADD COLUMN "VoiceDescription" TEXT NULL;""", cancellationToken);
+        if (!columns.Contains("VoiceTags", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "VoiceProfiles" ADD COLUMN "VoiceTags" TEXT NULL;""", cancellationToken);
+    }
+
+    private static async Task EnsureAiAnalysisErrorSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "AiAnalysisErrors" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_AiAnalysisErrors" PRIMARY KEY AUTOINCREMENT,
+                "NovelId" INTEGER NOT NULL,
+                "JobId" INTEGER NOT NULL,
+                "ChunkIndex" INTEGER NOT NULL,
+                "ChunkTotal" INTEGER NOT NULL,
+                "RetryDepth" INTEGER NOT NULL,
+                "Stage" TEXT NOT NULL,
+                "SourceText" TEXT NOT NULL,
+                "RawResponse" TEXT NULL,
+                "Error" TEXT NOT NULL,
+                "Recovered" INTEGER NOT NULL,
+                "CreatedAt" TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_AiAnalysisErrors_NovelId_JobId_ChunkIndex"
+                ON "AiAnalysisErrors" ("NovelId","JobId","ChunkIndex");
+            CREATE INDEX IF NOT EXISTS "IX_AiAnalysisErrors_CreatedAt"
+                ON "AiAnalysisErrors" ("CreatedAt");
+            """, cancellationToken);
+    }
+
+    private static async Task EnsureGeneratedNovelSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
+        var columns = await GetColumnsAsync(db, "GeneratedNovels", cancellationToken);
+        var alters = new List<string>();
+        if (!columns.Contains("Genre", StringComparer.OrdinalIgnoreCase)) alters.Add("""ALTER TABLE "GeneratedNovels" ADD COLUMN "Genre" TEXT NULL;""");
+        if (!columns.Contains("TargetWords", StringComparer.OrdinalIgnoreCase)) alters.Add("""ALTER TABLE "GeneratedNovels" ADD COLUMN "TargetWords" INTEGER NOT NULL DEFAULT 0;""");
+        if (!columns.Contains("ChapterCount", StringComparer.OrdinalIgnoreCase)) alters.Add("""ALTER TABLE "GeneratedNovels" ADD COLUMN "ChapterCount" INTEGER NOT NULL DEFAULT 0;""");
+        if (!columns.Contains("PointOfView", StringComparer.OrdinalIgnoreCase)) alters.Add("""ALTER TABLE "GeneratedNovels" ADD COLUMN "PointOfView" TEXT NULL;""");
+        if (!columns.Contains("Tone", StringComparer.OrdinalIgnoreCase)) alters.Add("""ALTER TABLE "GeneratedNovels" ADD COLUMN "Tone" TEXT NULL;""");
+        if (!columns.Contains("Outline", StringComparer.OrdinalIgnoreCase)) alters.Add("""ALTER TABLE "GeneratedNovels" ADD COLUMN "Outline" TEXT NULL;""");
+        foreach (var sql in alters)
+            await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 
     private static async Task<List<string>> GetColumnsAsync(AppDbContext db, string tableName, CancellationToken cancellationToken)

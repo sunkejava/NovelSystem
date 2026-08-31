@@ -56,8 +56,11 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
         bool forceJsonResponseFormat = false)
     {
         var settings = new SettingReader(db);
+        var provider = settings.Get("AiProvider", "LocalLlamaCpp");
         var baseUrl = settings.Get("AiBaseUrl", "http://127.0.0.1:8080/v1").TrimEnd('/');
         var model = settings.Get("AiModel", "local-model");
+        var apiKey = settings.Get("AiApiKey", string.Empty);
+        var isLocalLlamaCpp = provider.Equals("LocalLlamaCpp", StringComparison.OrdinalIgnoreCase);
 
         var timeoutSeconds = int.TryParse(settings.Get("AiTimeoutSeconds", "120"), out var timeout)
             ? Math.Clamp(timeout, 10, 3600)
@@ -86,7 +89,7 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
                                       out var configuredAnalysisCache)
                                   && configuredAnalysisCache;
 
-        var cachePrompt = jsonMode ? analysisCachePrompt : generalCachePrompt;
+        var cachePrompt = isLocalLlamaCpp && (jsonMode ? analysisCachePrompt : generalCachePrompt);
 
         var enableThinking = bool.TryParse(settings.Get("AiEnableThinking", "false"), out var thinking)
                              && thinking;
@@ -98,48 +101,68 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
 
         var client = httpClientFactory.CreateClient("llama.cpp");
         client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
 
         // Qwen 系列在未显式关闭 thinking 时可能先产生大量推理 token。
         // chat_template_kwargs 与 llama.cpp WebUI 的 enable_thinking 开关保持一致。
-        var common = new
+        var messages = new[]
         {
-            model,
-            messages = new[]
-            {
-                new { role = "system", content = systemPrompt },
-                new { role = "user", content = userPrompt }
-            },
-            temperature = jsonMode ? 0.0 : 0.25,
-            max_tokens = maxTokens,
-            stream = false,
-            cache_prompt = cachePrompt,
-            // -1 表示让 server 为每次独立请求选择空闲 slot，不固定到某个历史 slot。
-            id_slot = -1,
-            chat_template_kwargs = new
-            {
-                enable_thinking = enableThinking
-            }
+            new { role = "system", content = systemPrompt },
+            new { role = "user", content = userPrompt }
         };
 
         object payload;
-        if (jsonMode && (useJsonResponseFormat || forceJsonResponseFormat))
+        if (isLocalLlamaCpp)
         {
-            payload = new
-            {
-                common.model,
-                common.messages,
-                common.temperature,
-                common.max_tokens,
-                common.stream,
-                common.cache_prompt,
-                common.id_slot,
-                common.chat_template_kwargs,
-                response_format = new { type = "json_object" }
-            };
+            // llama.cpp 专属参数只发给本地服务，避免第三方 OpenAI-compatible API 因未知字段返回 400。
+            payload = jsonMode && (useJsonResponseFormat || forceJsonResponseFormat)
+                ? new
+                {
+                    model,
+                    messages,
+                    temperature = jsonMode ? 0.0 : 0.25,
+                    max_tokens = maxTokens,
+                    stream = false,
+                    cache_prompt = cachePrompt,
+                    id_slot = -1,
+                    chat_template_kwargs = new { enable_thinking = enableThinking },
+                    response_format = new { type = "json_object" }
+                }
+                : new
+                {
+                    model,
+                    messages,
+                    temperature = jsonMode ? 0.0 : 0.25,
+                    max_tokens = maxTokens,
+                    stream = false,
+                    cache_prompt = cachePrompt,
+                    id_slot = -1,
+                    chat_template_kwargs = new { enable_thinking = enableThinking }
+                };
         }
         else
         {
-            payload = common;
+            // 智谱、千问、豆包、DeepSeek 等走标准 OpenAI-compatible 请求。
+            payload = jsonMode && (useJsonResponseFormat || forceJsonResponseFormat)
+                ? new
+                {
+                    model,
+                    messages,
+                    temperature = jsonMode ? 0.0 : 0.25,
+                    max_tokens = maxTokens,
+                    stream = false,
+                    response_format = new { type = "json_object" }
+                }
+                : new
+                {
+                    model,
+                    messages,
+                    temperature = jsonMode ? 0.0 : 0.25,
+                    max_tokens = maxTokens,
+                    stream = false
+                };
         }
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();

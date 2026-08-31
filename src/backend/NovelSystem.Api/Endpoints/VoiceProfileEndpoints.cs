@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using NovelSystem.Api.Contracts;
 using NovelSystem.Application.Contracts;
+using NovelSystem.Application.Models;
 using NovelSystem.Domain.Entities;
 using NovelSystem.Infrastructure.Persistence;
 
@@ -30,7 +31,9 @@ public static class VoiceProfileEndpoints
                 query = query.Where(x =>
                     x.Name.Contains(value) ||
                     x.ReferenceAudioFile.Contains(value) ||
-                    x.ReferenceText.Contains(value));
+                    x.ReferenceText.Contains(value) ||
+                    (x.VoiceDescription != null && x.VoiceDescription.Contains(value)) ||
+                    (x.VoiceTags != null && x.VoiceTags.Contains(value)));
             }
 
             if (!string.IsNullOrWhiteSpace(language))
@@ -57,7 +60,9 @@ public static class VoiceProfileEndpoints
                     x.Id,
                     x.Name,
                     x.Language,
-                    x.Status
+                    x.Status,
+                    x.VoiceDescription,
+                    x.VoiceTags
                 })
                 .ToListAsync());
 
@@ -72,6 +77,8 @@ public static class VoiceProfileEndpoints
                 ReferenceText = request.ReferenceText,
                 UseXVector = request.UseXVector,
                 Language = request.Language,
+                VoiceDescription = request.VoiceDescription,
+                VoiceTags = request.VoiceTags,
                 Status = "Ready"
             };
 
@@ -125,6 +132,8 @@ public static class VoiceProfileEndpoints
                     ReferenceText = request.ReferenceText,
                     UseXVector = request.UseXVector,
                     Language = request.Language,
+                    VoiceDescription = request.VoiceDescription,
+                    VoiceTags = request.VoiceTags,
                     Status = "Ready"
                 };
 
@@ -183,6 +192,8 @@ public static class VoiceProfileEndpoints
             entity.ReferenceText = request.ReferenceText;
             entity.UseXVector = request.UseXVector;
             entity.Language = request.Language;
+            entity.VoiceDescription = request.VoiceDescription;
+            entity.VoiceTags = request.VoiceTags;
             entity.UpdatedAt = DateTime.UtcNow;
 
             if (audioChanged)
@@ -217,12 +228,46 @@ public static class VoiceProfileEndpoints
             }
         });
 
+        group.MapPost("/{id:long}/describe", async (
+            long id,
+            AppDbContext db,
+            IAiChatClient ai,
+            CancellationToken cancellationToken) =>
+        {
+            var entity = await db.VoiceProfiles.FindAsync(id);
+            if (entity is null) return Results.NotFound();
+
+            var raw = await ai.ChatJsonTrackedAsync(
+                "你是中文配音导演。根据音色档案信息输出JSON，不解释。",
+                """
+                根据以下音色名称、语言和参考文本，推断适合的人物声音类型。
+                输出：
+                {"description":"一句完整的声音描述","tags":["标签1","标签2","标签3"]}
+                标签优先覆盖：性别、年龄感、音高、音色质感、语速、情绪气质、适合角色类型。
+                音色名称：
+                """ + entity.Name + "
+语言：" + entity.Language + "
+参考文本：" + entity.ReferenceText,
+                new AiCallContext(null, null, "DescribeVoiceProfile"),
+                cancellationToken);
+
+            using var json = System.Text.Json.JsonDocument.Parse(raw);
+            var root = json.RootElement;
+            entity.VoiceDescription = root.TryGetProperty("description", out var desc) ? desc.GetString() : entity.VoiceDescription;
+            if (root.TryGetProperty("tags", out var tags) && tags.ValueKind == System.Text.Json.JsonValueKind.Array)
+                entity.VoiceTags = string.Join(",", tags.EnumerateArray().Select(x => x.GetString()).Where(x => !string.IsNullOrWhiteSpace(x)));
+            entity.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            return Results.Ok(entity);
+        });
+
         group.MapDelete("/{id:long}", async (long id, AppDbContext db) =>
         {
             var entity = await db.VoiceProfiles.FindAsync(id);
             if (entity is null) return Results.NotFound();
 
-            var inUse = await db.Characters.AnyAsync(x => x.VoiceProfileId == id);
+            var inUse = await db.Characters.AnyAsync(x => x.VoiceProfileId == id)
+                        || await db.Novels.AnyAsync(x => x.NarratorVoiceProfileId == id);
             if (inUse)
                 return Results.Conflict(new { message = "该音色仍被小说人物使用，不能删除。" });
 

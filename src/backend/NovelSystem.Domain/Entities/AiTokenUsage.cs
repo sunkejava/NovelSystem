@@ -26,6 +26,7 @@ public sealed class AiTokenUsage : Entity
 
     public int InputCharacters { get; set; }
     public int OutputCharacters { get; set; }
+    public bool IsEstimated { get; set; }
     public bool Success { get; set; } = true;
     public string? Error { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

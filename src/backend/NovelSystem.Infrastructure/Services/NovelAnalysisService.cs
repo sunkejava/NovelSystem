@@ -245,10 +245,23 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
         }
         catch (JsonException ex)
         {
+            var diagnostic = await SaveAnalysisErrorAsync(
+                novelId,
+                jobId,
+                chunkIndex,
+                chunkTotal,
+                depth,
+                IsLikelyTruncatedJson(ex, raw) ? "TruncatedJson" : "MalformedJson",
+                chunk,
+                raw,
+                ex,
+                cancellationToken);
+
             // 未闭合对象/数组通常说明输出被 max_tokens 或上下文上限截断。
             // 这类问题通过继续拆小当前片段最有效。
             if (IsLikelyTruncatedJson(ex, raw) && chunk.Length > 700 && depth < 6)
-                return await SplitAndAnalyzeAsync(
+            {
+                var splitResult = await SplitAndAnalyzeAsync(
                     chunk,
                     novelId,
                     jobId,
@@ -257,6 +270,10 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                     cancellationToken,
                     depth,
                     ex);
+                diagnostic.Recovered = true;
+                await db.SaveChangesAsync(cancellationToken);
+                return splitResult;
+            }
 
             // 冒号、逗号、引号位置错误属于“模型生成了错误 JSON”，
             // 对这种情况继续二分通常没有意义。先让模型只修 JSON，不重新分析原文。
@@ -283,7 +300,10 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                             chunkTotal),
                         cancellationToken);
 
-                    return ParseCompactResult(repaired);
+                    var repairedResult = ParseCompactResult(repaired);
+                    diagnostic.Recovered = true;
+                    await db.SaveChangesAsync(cancellationToken);
+                    return repairedResult;
                 }
                 catch (JsonException)
                 {
@@ -306,13 +326,16 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                         chunkTotal),
                     cancellationToken);
 
-                return ParseCompactResult(strictRaw);
+                var strictResult = ParseCompactResult(strictRaw);
+                diagnostic.Recovered = true;
+                await db.SaveChangesAsync(cancellationToken);
+                return strictResult;
             }
             catch (Exception strictEx) when (chunk.Length > 700 && depth < 6)
             {
                 // 某些 llama.cpp / 模型组合的强约束解析也可能失败。
                 // 最后才缩小片段，避免单个坏 JSON 阻塞整本小说。
-                return await SplitAndAnalyzeAsync(
+                var splitResult = await SplitAndAnalyzeAsync(
                     chunk,
                     novelId,
                     jobId,
@@ -321,6 +344,9 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                     cancellationToken,
                     depth,
                     strictEx);
+                diagnostic.Recovered = true;
+                await db.SaveChangesAsync(cancellationToken);
+                return splitResult;
             }
             catch (Exception strictEx)
             {
@@ -393,14 +419,7 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
             yield break;
 
         var midpoint = chunk.Length / 2;
-        var leftBoundary = chunk.LastIndexOf('\n', midpoint);
-        var rightBoundary = chunk.IndexOf('\n', midpoint);
-
-        var splitIndex = leftBoundary > chunk.Length / 4
-            ? leftBoundary
-            : rightBoundary > 0 && rightBoundary < chunk.Length * 3 / 4
-                ? rightBoundary
-                : midpoint;
+        var splitIndex = FindSemanticBoundary(chunk, midpoint, Math.Max(120, chunk.Length / 4));
 
         var left = chunk[..splitIndex].Trim();
         var right = chunk[splitIndex..].Trim();
@@ -480,8 +499,8 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                     buffer.Clear();
                 }
 
-                for (var offset = 0; offset < paragraph.Length; offset += chunkSize)
-                    yield return paragraph.Substring(offset, Math.Min(chunkSize, paragraph.Length - offset));
+                foreach (var part in SplitLongTextAtSemanticBoundaries(paragraph, chunkSize))
+                    yield return part;
                 continue;
             }
 
@@ -499,6 +518,85 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
 
         if (buffer.Length > 0)
             yield return buffer.ToString();
+    }
+
+    /// <summary>
+    /// 长段落按“软长度”切分。到达目标长度后优先向后寻找完整句子边界，
+    /// 最多允许额外延长约 35%，避免把人物对白或句子从中间截断。
+    /// </summary>
+    private static IEnumerable<string> SplitLongTextAtSemanticBoundaries(string text, int targetSize)
+    {
+        var offset = 0;
+        while (offset < text.Length)
+        {
+            var remaining = text.Length - offset;
+            if (remaining <= targetSize)
+            {
+                yield return text[offset..];
+                yield break;
+            }
+
+            var target = offset + targetSize;
+            var searchRadius = Math.Max(200, (int)(targetSize * 0.35));
+            var boundary = FindSemanticBoundary(text, target, searchRadius);
+            if (boundary <= offset)
+                boundary = Math.Min(offset + targetSize, text.Length);
+
+            yield return text[offset..boundary].Trim();
+            offset = boundary;
+        }
+    }
+
+    private static int FindSemanticBoundary(string text, int target, int radius)
+    {
+        if (text.Length == 0) return 0;
+        target = Math.Clamp(target, 1, text.Length - 1);
+        var sentenceMarks = new[] { '\n', '。', '！', '？', '；', '!', '?', ';', '…' };
+
+        // 优先向后延长到完整语义边界。
+        var rightLimit = Math.Min(text.Length - 1, target + radius);
+        for (var i = target; i <= rightLimit; i++)
+            if (sentenceMarks.Contains(text[i]))
+                return i + 1;
+
+        // 向后找不到时再向前找，避免无限延长。
+        var leftLimit = Math.Max(1, target - radius);
+        for (var i = target - 1; i >= leftLimit; i--)
+            if (sentenceMarks.Contains(text[i]))
+                return i + 1;
+
+        return target;
+    }
+
+    private async Task<AiAnalysisError> SaveAnalysisErrorAsync(
+        long novelId,
+        long jobId,
+        int chunkIndex,
+        int chunkTotal,
+        int retryDepth,
+        string stage,
+        string sourceText,
+        string? rawResponse,
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        var entity = new AiAnalysisError
+        {
+            NovelId = novelId,
+            JobId = jobId,
+            ChunkIndex = chunkIndex,
+            ChunkTotal = chunkTotal,
+            RetryDepth = retryDepth,
+            Stage = stage,
+            SourceText = sourceText,
+            RawResponse = rawResponse,
+            Error = exception.ToString(),
+            Recovered = false,
+            CreatedAt = DateTime.UtcNow
+        };
+        db.AiAnalysisErrors.Add(entity);
+        await db.SaveChangesAsync(cancellationToken);
+        return entity;
     }
 
     private static string NormalizeName(string? name)

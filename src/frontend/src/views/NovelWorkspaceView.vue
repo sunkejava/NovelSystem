@@ -12,7 +12,7 @@ import ListPager from '../components/ListPager.vue';
 
 const route=useRoute(),router=useRouter(),id=Number(route.params.id);
 const detail=ref<any>(null),voiceProfiles=ref<any[]>([]);
-const activeTab=ref('characters'),working=ref(false);
+const activeTab=ref('characters'),working=ref(false),matchingVoices=ref(false),deduplicating=ref(false);
 
 const scripts=ref<any[]>([]),scriptTotal=ref(0),scriptSpeakers=ref<string[]>([]);
 const scriptQuery=ref({page:1,pageSize:20,keyword:'',speaker:'',status:''});
@@ -47,6 +47,23 @@ async function saveNarratorVoice(){
   await novelApi.updateNarratorVoice(id,detail.value.novel.narratorVoiceProfileId??null);
   ElMessage.success('旁白音色已保存');
 }
+async function autoMatchVoices(){
+  matchingVoices.value=true;
+  try{
+    const r=await novelApi.autoMatchVoices(id);
+    ElMessage.success('已自动匹配 '+r.matched+' 个角色音色');
+    await loadBase();
+  }finally{matchingVoices.value=false;}
+}
+async function deduplicateCharacters(){
+  await ElMessageBox.confirm('AI 将识别同一人物的本名、昵称和称谓，并同步修正全部脚本角色。建议在解析完成后执行。','人物角色去重',{type:'warning'});
+  deduplicating.value=true;
+  try{
+    const r=await novelApi.deduplicateCharacters(id);
+    ElMessage.success('已合并 '+r.mergedGroups+' 组重复人物，移除 '+r.removedCharacters+' 个别名角色');
+    await Promise.all([loadBase(),loadScripts(),loadAudio()]);
+  }finally{deduplicating.value=false;}
+}
 async function generateSegment(row:any){await audioApi.generateSegment(row.id);ElMessage.success('片段生成任务已创建');await loadAudio();}
 async function removeSegment(row:any){await ElMessageBox.confirm('确认删除第 '+row.order+' 条已生成音频？脚本文本不会删除。','删除音频片段',{type:'warning'});await audioApi.removeSegment(row.id);ElMessage.success('音频片段已删除');await loadAudio();}
 async function mergeAudio(){await audioApi.merge(id);ElMessage.success('音频合并任务已进入任务中枢');}
@@ -76,7 +93,15 @@ onUnmounted(()=>audioTimer&&clearInterval(audioTimer));
       <button :class="{active:activeTab==='audio'}" @click="activeTab='audio'">音频资产</button>
     </div>
 
-    <div v-if="activeTab==='characters'" class="character-grid">
+    <div v-if="activeTab==='characters'" class="workspace-tab-fill">
+      <div class="character-toolbar">
+        <div><span class="eyebrow">VOICE CAST</span><b>{{characterCount}} 个角色 + 旁白</b></div>
+        <div>
+          <el-button class="ghost-button" :loading="deduplicating" @click="deduplicateCharacters">AI 人物去重</el-button>
+          <el-button class="neon-button" :loading="matchingVoices" @click="autoMatchVoices">自动匹配音色</el-button>
+        </div>
+      </div>
+      <div class="character-grid">
       <article class="character-card narrator-card">
         <div class="avatar-holo narrator-avatar">旁</div>
         <div class="character-main">
@@ -112,6 +137,7 @@ onUnmounted(()=>audioTimer&&clearInterval(audioTimer));
           </el-select>
         </div>
       </article>
+      </div>
     </div>
 
     <div v-else-if="activeTab==='scripts'" class="workspace-tab-fill">

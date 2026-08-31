@@ -266,8 +266,6 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
     {
         VoiceProfile? voiceProfile;
 
-        // “旁白”不是普通 Character，而是小说级默认音色。
-        // 解析阶段不会把旁白写入 Characters，因此这里必须单独处理。
         if (line.CharacterId is null || string.Equals(line.Speaker, "旁白", StringComparison.OrdinalIgnoreCase))
         {
             var narratorVoiceProfileId = await db.Novels.AsNoTracking()
@@ -284,7 +282,6 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         else
         {
             var character = await db.Characters.FindAsync([line.CharacterId.Value], cancellationToken);
-
             if (character?.VoiceProfileId is null)
                 throw new InvalidOperationException($"角色“{line.Speaker}”尚未绑定音色配置。");
 
@@ -296,11 +293,55 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         line.Status = "Generating";
         await db.SaveChangesAsync(cancellationToken);
 
-        await tts.GenerateAsync(line.Text, voiceProfile, output, cancellationToken);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            await tts.GenerateAsync(line.Text, voiceProfile, output, cancellationToken);
+            stopwatch.Stop();
 
-        line.AudioFile = output;
-        line.Status = "Completed";
-        await db.SaveChangesAsync(cancellationToken);
+            var estimatedTokens = EstimateTextTokens(line.Text);
+            db.AiTokenUsages.Add(new AiTokenUsage
+            {
+                NovelId = line.NovelId,
+                Operation = "TtsGenerate",
+                Model = "Qwen3-TTS",
+                PromptTokens = estimatedTokens,
+                CompletionTokens = 0,
+                TotalTokens = estimatedTokens,
+                InputCharacters = line.Text.Length,
+                OutputCharacters = 0,
+                ElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
+                IsEstimated = true,
+                Success = true,
+                CreatedAt = DateTime.UtcNow
+            });
+
+            line.AudioFile = output;
+            line.Status = "Completed";
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            var estimatedTokens = EstimateTextTokens(line.Text);
+            db.AiTokenUsages.Add(new AiTokenUsage
+            {
+                NovelId = line.NovelId,
+                Operation = "TtsGenerate",
+                Model = "Qwen3-TTS",
+                PromptTokens = estimatedTokens,
+                TotalTokens = estimatedTokens,
+                InputCharacters = line.Text.Length,
+                ElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
+                IsEstimated = true,
+                Success = false,
+                Error = ex.Message,
+                CreatedAt = DateTime.UtcNow
+            });
+            line.Status = "Failed";
+            await db.SaveChangesAsync(CancellationToken.None);
+            throw;
+        }
     }
 
     private static async Task MergeAudioAsync(
@@ -351,69 +392,79 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         var novel = await db.Novels.FindAsync([novelId], cancellationToken)
                     ?? throw new InvalidOperationException("小说不存在。");
 
-        var chunkText = await db.Settings
-            .Where(x => x.Key == "AiChunkSize")
-            .Select(x => x.Value)
-            .FirstOrDefaultAsync(cancellationToken) ?? "12000";
+        var settings = await db.Settings.AsNoTracking()
+            .ToDictionaryAsync(x => x.Key, x => x.Value, cancellationToken);
+        var chunkSize = int.TryParse(settings.GetValueOrDefault("AiStyleChunkSize", "16000"), out var parsedChunk)
+            ? Math.Clamp(parsedChunk, 4000, 50000)
+            : 16000;
+        var maxSamples = int.TryParse(settings.GetValueOrDefault("AiStyleSampleChunks", "12"), out var parsedSamples)
+            ? Math.Clamp(parsedSamples, 4, 40)
+            : 12;
 
-        var chunkSize = int.TryParse(chunkText, out var parsed)
-            ? Math.Clamp(parsed, 2000, 50000)
-            : 12000;
+        var allChunks = Split(novel.Content, chunkSize).ToList();
+        var selected = SelectRepresentativeChunks(allChunks, maxSamples);
+        var reduceGroupSize = 4;
+        var reduceSteps = (int)Math.Ceiling(selected.Count / (double)reduceGroupSize);
+        job.TotalSteps = selected.Count + reduceSteps + 1;
+        job.Checkpoint = 0;
+        job.Progress = 0;
+        job.Result = null;
+        JobTimingCalculator.Refresh(job);
+        await db.SaveChangesAsync(cancellationToken);
 
-        var chunks = Split(novel.Content, chunkSize).ToList();
-        job.TotalSteps = chunks.Count + 1;
-
-        var partials = new List<string>();
-        if (job.Checkpoint > 0 && !string.IsNullOrWhiteSpace(job.Result))
-        {
-            try
-            {
-                partials = JsonSerializer.Deserialize<List<string>>(job.Result) ?? [];
-            }
-            catch
-            {
-                partials = [];
-                job.Checkpoint = 0;
-            }
-        }
-
-        var startIndex = Math.Min(job.Checkpoint, chunks.Count);
-
-        for (var index = startIndex; index < chunks.Count; index++)
+        var partials = new List<string>(selected.Count);
+        for (var index = 0; index < selected.Count; index++)
         {
             await EnsureNotStoppingAsync(db, job, cancellationToken);
-
             var result = await ai.ChatTrackedAsync(
-                "你是小说写作技法研究专家。请只分析写作技法，不复述大段原文。",
-                "请分析本片段的叙事视角、语言风格、章节节奏、人物塑造、对白方式、悬念设计、情绪推进、句式特点和可复用写作规则。\n\n" + chunks[index],
-                new AiCallContext(
-                    novelId,
-                    job.Id,
-                    "LearnWritingStyleChunk",
-                    index + 1,
-                    chunks.Count),
+                "你是小说写作技法研究专家。只提取可复用的写作规律，不复述剧情，不引用长原文。",
+                """
+                分析本片段的：叙事视角、语言与句式、章节/场景节奏、人物塑造、对白方式、
+                悬念与信息释放、情绪推进、描写密度、常用转场、禁忌与可复用规则。
+                每项尽量用简洁规则表达，整体控制在1200字以内。
+
+                小说样本：
+                """ + selected[index],
+                new AiCallContext(novelId, job.Id, "LearnWritingStyleChunk", index + 1, selected.Count),
                 cancellationToken);
 
             partials.Add(result);
+            job.Checkpoint++;
+            job.Progress = (int)Math.Round(job.Checkpoint * 100d / job.TotalSteps);
             job.Result = JsonSerializer.Serialize(partials);
-            job.Checkpoint = index + 1;
-            job.Progress = (int)Math.Round((index + 1) * 90d / Math.Max(chunks.Count, 1));
+            JobTimingCalculator.Refresh(job);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        var reduced = new List<string>();
+        for (var groupIndex = 0; groupIndex < partials.Count; groupIndex += reduceGroupSize)
+        {
+            await EnsureNotStoppingAsync(db, job, cancellationToken);
+            var group = partials.Skip(groupIndex).Take(reduceGroupSize).ToList();
+            var result = await ai.ChatTrackedAsync(
+                "你是小说风格研究员。合并多段局部分析，去重并保留稳定、反复出现的写作规律。",
+                "请压缩为不超过1800字的风格规则摘要：\n\n" + string.Join("\n\n---\n", group),
+                new AiCallContext(novelId, job.Id, "LearnWritingStyleReduce", reduced.Count + 1, reduceSteps),
+                cancellationToken);
+
+            reduced.Add(result);
+            job.Checkpoint++;
+            job.Progress = (int)Math.Round(job.Checkpoint * 100d / job.TotalSteps);
             JobTimingCalculator.Refresh(job);
             await db.SaveChangesAsync(cancellationToken);
         }
 
         await EnsureNotStoppingAsync(db, job, cancellationToken);
-
         var synthesis = await ai.ChatTrackedAsync(
-            "你是小说写作方法论专家。根据多段分析结果，整理成一个稳定、可复用、可指导新小说生成的写作风格模型。",
-            "请生成：1. 风格总览；2. 叙事视角；3. 语言与句式；4. 节奏；5. 人物塑造；6. 对白；7. 悬念；8. 情绪推进；9. 禁忌；10. 可直接给小说生成模型使用的完整提示词模板。\n\n" +
-            string.Join("\n\n--- 分块分析 ---\n", partials),
-            new AiCallContext(
-                novelId,
-                job.Id,
-                "LearnWritingStyleSynthesis",
-                chunks.Count + 1,
-                chunks.Count + 1),
+            "你是小说写作方法论专家。根据代表性样本的风格摘要，生成稳定、可复用、可指导原创小说生成的写作风格模型。",
+            """
+            请生成：1.风格总览；2.叙事视角；3.语言与句式；4.节奏与章节结构；
+            5.人物塑造；6.对白；7.悬念与信息释放；8.情绪推进；9.描写与转场；
+            10.禁忌；11.可直接给小说生成模型使用的完整提示词模板。
+
+            风格摘要：
+            """ + string.Join("\n\n=== REDUCED STYLE ===\n", reduced),
+            new AiCallContext(novelId, job.Id, "LearnWritingStyleSynthesis", 1, 1),
             cancellationToken);
 
         var style = new WritingStyle
@@ -425,13 +476,38 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         };
 
         db.WritingStyles.Add(style);
-        job.Checkpoint = chunks.Count + 1;
+        job.Checkpoint = job.TotalSteps;
         job.Progress = 100;
         JobTimingCalculator.Refresh(job);
         await db.SaveChangesAsync(cancellationToken);
 
         job.Result = $"style:{style.Id}";
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static List<string> SelectRepresentativeChunks(IReadOnlyList<string> chunks, int maxSamples)
+    {
+        if (chunks.Count <= maxSamples)
+            return chunks.ToList();
+
+        var result = new List<string>(maxSamples);
+        var used = new HashSet<int>();
+        for (var i = 0; i < maxSamples; i++)
+        {
+            var position = i * (chunks.Count - 1d) / (maxSamples - 1d);
+            var index = (int)Math.Round(position);
+            if (used.Add(index))
+                result.Add(chunks[index]);
+        }
+        return result;
+    }
+
+    private static int EstimateTextTokens(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        var cjk = text.Count(ch => ch >= 0x2E80);
+        var other = Math.Max(0, text.Length - cjk);
+        return cjk + (int)Math.Ceiling(other / 4d);
     }
 
     private static async Task EnsureNotStoppingAsync(

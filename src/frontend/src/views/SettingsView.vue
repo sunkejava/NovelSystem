@@ -31,7 +31,7 @@ const {mode,accent,setMode,setAccent}=useTheme();
 const accents=['#43e8ff','#5979ff','#7c6cff','#a855f7','#ff4fd8','#21d19f','#ff9f43'];
 const languages=['Auto','Chinese','English','German','Italian','Portuguese','Spanish','Japanese','Korean','French','Russian'];
 
-const voiceForm=ref({name:'',referenceAudioFile:'',referenceText:'',useXVector:false,language:'Chinese'});
+const voiceForm=ref({name:'',referenceAudioFile:'',referenceText:'',useXVector:false,language:'Chinese',voiceDescription:'',voiceTags:''});
 const batchVoiceForm=ref({referenceText:'',useXVector:true,language:'Chinese',skipExisting:true,buildPrompt:false});
 const isEditing=computed(()=>editingId.value!==null);
 
@@ -50,7 +50,7 @@ async function save(){await settingApi.save(form.value);ElMessage.success('模�
 async function testAi(){testingAi.value=true;try{await settingApi.save(form.value);aiTest.value=await settingApi.testAi();aiTest.value.online?ElMessage.success('LLM 连接成功，响应 '+aiTest.value.latencyMs+' ms'):ElMessage.error('LLM 连接失败：'+(aiTest.value.error||'未知错误'));}finally{testingAi.value=false;}}
 async function testTts(){testingTts.value=true;try{await settingApi.save(form.value);ttsTest.value=await settingApi.testTts();ttsTest.value.online?ElMessage.success('Qwen3-TTS 服务在线，响应 '+ttsTest.value.latencyMs+' ms'):ElMessage.error('Qwen3-TTS 连接失败：'+(ttsTest.value.error||'未知错误'));}finally{testingTts.value=false;}}
 async function testFfmpeg(){testingFfmpeg.value=true;try{await settingApi.save(form.value);ffmpegTest.value=await settingApi.testFfmpeg();ffmpegTest.value.online?ElMessage.success('FFmpeg 可用：'+ffmpegTest.value.version):ElMessage.error('FFmpeg 检测失败：'+(ffmpegTest.value.error||'未知错误'));}finally{testingFfmpeg.value=false;}}
-function resetVoice(){editingId.value=null;voiceForm.value={name:'',referenceAudioFile:'',referenceText:'',useXVector:false,language:'Chinese'};}
+function resetVoice(){editingId.value=null;voiceForm.value={name:'',referenceAudioFile:'',referenceText:'',useXVector:false,language:'Chinese',voiceDescription:'',voiceTags:''};}
 function openVoiceCreate(){
   resetVoice();
   voiceDialogTab.value='single';
@@ -58,7 +58,7 @@ function openVoiceCreate(){
 }
 function editVoice(row:any){
   editingId.value=row.id;
-  voiceForm.value={name:row.name,referenceAudioFile:row.referenceAudioFile,referenceText:row.referenceText,useXVector:row.useXVector,language:row.language||'Chinese'};
+  voiceForm.value={name:row.name,referenceAudioFile:row.referenceAudioFile,referenceText:row.referenceText,useXVector:row.useXVector,language:row.language||'Chinese',voiceDescription:row.voiceDescription||'',voiceTags:row.voiceTags||''};
   voiceDialogTab.value='single';
   voiceDialogVisible.value=true;
 }
@@ -85,6 +85,12 @@ async function batchCreateVoices(){
   }finally{batchCreating.value=false;}
 }
 async function buildPrompt(row:any){ElMessage.info('正在调用 Qwen3-TTS 生成 Prompt...');await voiceApi.buildPrompt(row.id);ElMessage.success('Prompt 缓存生成完成');await loadVoices();}
+async function describeVoice(row:any){
+  ElMessage.info('正在生成音色语义描述...');
+  await voiceApi.describe(row.id);
+  ElMessage.success('音色描述已生成');
+  await loadVoices();
+}
 async function removeVoice(row:any){await ElMessageBox.confirm('确认删除音色“'+row.name+'”？','删除音色',{type:'warning'});await voiceApi.remove(row.id);ElMessage.success('音色已删除');await loadVoices();}
 onMounted(load);
 </script>
@@ -102,10 +108,23 @@ onMounted(load);
           <div class="section-title"><span>01</span><div><h3>LLM 推理引擎</h3><p>OPENAI-COMPATIBLE LLAMA.CPP</p></div></div>
           <el-form label-position="top">
             <div class="endpoint-grid">
+              <el-form-item label="AI 供应商">
+                <el-select v-model="form.AiProvider" class="full-width">
+                  <el-option label="本地 llama.cpp" value="LocalLlamaCpp"/>
+                  <el-option label="智谱 GLM（OpenAI兼容）" value="Zhipu"/>
+                  <el-option label="阿里千问 DashScope（OpenAI兼容）" value="Qwen"/>
+                  <el-option label="火山豆包 Ark（OpenAI兼容）" value="Doubao"/>
+                  <el-option label="DeepSeek（OpenAI兼容）" value="DeepSeek"/>
+                  <el-option label="其他 OpenAI Compatible" value="OpenAICompatible"/>
+                </el-select>
+              </el-form-item>
               <el-form-item label="API Base URL"><el-input v-model="form.AiBaseUrl"/></el-form-item>
+              <el-form-item label="API Key"><el-input v-model="form.AiApiKey" type="password" show-password placeholder="本地 llama.cpp 可留空"/></el-form-item>
               <el-form-item label="Model / Alias"><el-input v-model="form.AiModel"/></el-form-item>
               <el-form-item label="请求超时（秒）"><el-input v-model="form.AiTimeoutSeconds" type="number"/></el-form-item>
               <el-form-item label="小说自动拆分长度（字符）"><el-input v-model="form.AiChunkSize" type="number"/></el-form-item>
+              <el-form-item label="风格学习样本长度"><el-input v-model="form.AiStyleChunkSize" type="number" placeholder="16000"/></el-form-item>
+              <el-form-item label="风格学习最大样本数"><el-input v-model="form.AiStyleSampleChunks" type="number" placeholder="12"/></el-form-item>
               <el-form-item label="解析最大输出 Token"><el-input v-model="form.AiAnalysisMaxTokens" type="number"/></el-form-item>
               <el-form-item label="普通 AI Prompt Cache"><el-select v-model="form.AiCachePrompt" class="full-width"><el-option label="启用（推荐）" value="true"/><el-option label="禁用" value="false"/></el-select></el-form-item>
               <el-form-item label="小说分块解析 Prompt Cache"><el-select v-model="form.AiAnalysisCachePrompt" class="full-width"><el-option label="关闭（推荐，分块完全隔离）" value="false"/><el-option label="启用" value="true"/></el-select></el-form-item>
@@ -179,7 +198,7 @@ onMounted(load);
           </div>
           <div class="table-flex-region">
             <el-table :data="profiles" class="cyber-table" height="100%">
-              <el-table-column prop="name" label="音色" min-width="150"/><el-table-column prop="language" label="语言" width="100"/><el-table-column label="模式" width="120"><template #default="{row}">{{row.useXVector?'X-Vector':'参考文本'}}</template></el-table-column><el-table-column prop="referenceAudioFile" label="参考 WAV" min-width="250"/><el-table-column label="Prompt" min-width="180"><template #default="{row}"><span class="path-text">{{row.promptFile||'尚未生成'}}</span></template></el-table-column><el-table-column label="状态" width="130"><template #default="{row}"><StatusBadge :status="row.status"/></template></el-table-column><el-table-column label="操作" width="260" fixed="right"><template #default="{row}"><el-button text @click="editVoice(row)">编辑</el-button><el-button text type="primary" @click="buildPrompt(row)">生成 Prompt</el-button><el-button text type="danger" @click="removeVoice(row)">删除</el-button></template></el-table-column>
+              <el-table-column prop="name" label="音色" min-width="150"/><el-table-column prop="language" label="语言" width="100"/><el-table-column label="模式" width="120"><template #default="{row}">{{row.useXVector?'X-Vector':'参考文本'}}</template></el-table-column><el-table-column prop="voiceDescription" label="音色描述" min-width="260" show-overflow-tooltip/><el-table-column prop="voiceTags" label="标签" min-width="180" show-overflow-tooltip/><el-table-column prop="referenceAudioFile" label="参考 WAV" min-width="220"/><el-table-column label="Prompt缓存" min-width="180"><template #default="{row}"><span class="path-text">{{row.promptFile||'尚未生成'}}</span></template></el-table-column><el-table-column label="状态" width="130"><template #default="{row}"><StatusBadge :status="row.status"/></template></el-table-column><el-table-column label="操作" width="260" fixed="right"><template #default="{row}"><el-button text @click="editVoice(row)">编辑</el-button><el-button text type="primary" @click="describeVoice(row)">生成描述</el-button><el-button text type="primary" @click="buildPrompt(row)">生成 Prompt</el-button><el-button text type="danger" @click="removeVoice(row)">删除</el-button></template></el-table-column>
             </el-table>
           </div>
           <ListPager v-model:page="voiceQuery.page" v-model:page-size="voiceQuery.pageSize" :total="voiceTotal" @change="loadVoices"/>
@@ -208,7 +227,13 @@ onMounted(load);
             <el-form-item label="仅使用 x-vector"><el-switch v-model="voiceForm.useXVector"/></el-form-item>
           </div>
           <el-form-item label="参考音频对应文本">
-            <el-input v-model="voiceForm.referenceText" type="textarea" :rows="4" placeholder="未启用 x-vector 时必须与参考 WAV 中实际说话内容一致"/>
+            <el-input v-model="voiceForm.referenceText" type="textarea" :rows="3" placeholder="未启用 x-vector 时必须与参考 WAV 中实际说话内容一致"/>
+          </el-form-item>
+          <el-form-item label="音色类型描述">
+            <el-input v-model="voiceForm.voiceDescription" type="textarea" :rows="3" placeholder="例如：青年男性，中低音，沉稳克制，适合冷静男主/旁白"/>
+          </el-form-item>
+          <el-form-item label="音色标签">
+            <el-input v-model="voiceForm.voiceTags" placeholder="例如：男声,青年,中低音,沉稳,磁性"/>
           </el-form-item>
         </el-form>
         <div class="voice-dialog-actions">

@@ -4,8 +4,8 @@ namespace NovelSystem.Domain.Entities;
 
 /// <summary>
 /// 可复用的 Qwen3-TTS 音色配置。
-/// ReferenceAudioFile 为参考 WAV，ReferenceText 必须与参考音频内容尽量一致。
-/// PromptFile 为 /save_prompt 生成并下载到 NovelSystem 本地的提示文件。
+/// PromptFile 是 Qwen3-TTS 从参考音频提取的可复用声音条件缓存，并不是自然语言描述。
+/// VoiceDescription / VoiceTags 用于人物类型展示和 AI 自动匹配。
 /// </summary>
 public sealed class VoiceProfile : Entity
 {
@@ -15,6 +15,8 @@ public sealed class VoiceProfile : Entity
     public bool UseXVector { get; set; }
     public string Language { get; set; } = "Chinese";
     public string? PromptFile { get; set; }
+    public string? VoiceDescription { get; set; }
+    public string? VoiceTags { get; set; }
     public string Status { get; set; } = "Ready";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

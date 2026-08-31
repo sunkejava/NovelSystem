@@ -45,6 +45,7 @@ public static class SettingEndpoints
             var settings = db.Settings.ToDictionary(x => x.Key, x => x.Value);
             var baseUrl = settings.GetValueOrDefault("AiBaseUrl", "http://127.0.0.1:8080/v1").TrimEnd('/');
             var model = settings.GetValueOrDefault("AiModel", "local-model");
+            var apiKey = settings.GetValueOrDefault("AiApiKey", string.Empty);
             var timeoutText = settings.GetValueOrDefault("AiTimeoutSeconds", "120");
             var timeoutSeconds = int.TryParse(timeoutText, out var timeout) ? Math.Clamp(timeout, 10, 3600) : 120;
             var sw = Stopwatch.StartNew();
@@ -53,6 +54,9 @@ public static class SettingEndpoints
             {
                 using var client = factory.CreateClient();
                 client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+                if (!string.IsNullOrWhiteSpace(apiKey))
+                    client.DefaultRequestHeaders.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
                 using var response = await client.PostAsJsonAsync(
                     $"{baseUrl}/chat/completions",
                     new

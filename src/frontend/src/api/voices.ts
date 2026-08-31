@@ -6,5 +6,6 @@ export const voiceApi={
   batchCreate:(payload:any)=>http.post('/voice-profiles/batch',payload).then(r=>r.data),
   update:(id:number,payload:any)=>http.put('/voice-profiles/'+id,payload).then(r=>r.data),
   buildPrompt:(id:number)=>http.post('/voice-profiles/'+id+'/prompt').then(r=>r.data),
+  describe:(id:number)=>http.post('/voice-profiles/'+id+'/describe').then(r=>r.data),
   remove:(id:number)=>http.delete('/voice-profiles/'+id)
 };
