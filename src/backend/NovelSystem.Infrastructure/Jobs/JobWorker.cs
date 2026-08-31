@@ -264,15 +264,33 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         ScriptLine line,
         CancellationToken cancellationToken)
     {
-        var character = line.CharacterId is null
-            ? null
-            : await db.Characters.FindAsync([line.CharacterId.Value], cancellationToken);
+        VoiceProfile? voiceProfile;
 
-        if (character?.VoiceProfileId is null)
-            throw new InvalidOperationException($"角色“{line.Speaker}”尚未绑定音色配置。");
+        // “旁白”不是普通 Character，而是小说级默认音色。
+        // 解析阶段不会把旁白写入 Characters，因此这里必须单独处理。
+        if (line.CharacterId is null || string.Equals(line.Speaker, "旁白", StringComparison.OrdinalIgnoreCase))
+        {
+            var narratorVoiceProfileId = await db.Novels.AsNoTracking()
+                .Where(x => x.Id == line.NovelId)
+                .Select(x => x.NarratorVoiceProfileId)
+                .SingleOrDefaultAsync(cancellationToken);
 
-        var voiceProfile = await db.VoiceProfiles.FindAsync([character.VoiceProfileId.Value], cancellationToken)
+            if (!narratorVoiceProfileId.HasValue)
+                throw new InvalidOperationException("当前小说尚未配置旁白音色，请在“角色声纹矩阵”中为旁白绑定音色。");
+
+            voiceProfile = await db.VoiceProfiles.FindAsync([narratorVoiceProfileId.Value], cancellationToken)
+                           ?? throw new InvalidOperationException("当前小说绑定的旁白音色档案不存在，请重新选择旁白音色。");
+        }
+        else
+        {
+            var character = await db.Characters.FindAsync([line.CharacterId.Value], cancellationToken);
+
+            if (character?.VoiceProfileId is null)
+                throw new InvalidOperationException($"角色“{line.Speaker}”尚未绑定音色配置。");
+
+            voiceProfile = await db.VoiceProfiles.FindAsync([character.VoiceProfileId.Value], cancellationToken)
                            ?? throw new InvalidOperationException($"角色“{line.Speaker}”绑定的音色不存在。");
+        }
 
         var output = $"storage/audio/{line.NovelId}/{line.Order:D6}.wav";
         line.Status = "Generating";

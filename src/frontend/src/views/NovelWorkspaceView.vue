@@ -43,6 +43,10 @@ function resetAudio(){audioQuery.value={page:1,pageSize:20,keyword:'',speaker:''
 async function analyze(){working.value=true;try{await novelApi.analyze(id);ElMessage.success('解析任务已进入任务中枢');router.push('/jobs');}finally{working.value=false;}}
 async function generateAllAudio(){working.value=true;try{await novelApi.generateAudio(id);ElMessage.success('整本有声书任务已进入任务中枢');activeTab.value='audio';}finally{working.value=false;}}
 async function saveCharacter(row:any){await novelApi.updateCharacter(row.id,row);ElMessage.success(row.name+' 的音色档案已保存');}
+async function saveNarratorVoice(){
+  await novelApi.updateNarratorVoice(id,detail.value.novel.narratorVoiceProfileId??null);
+  ElMessage.success('旁白音色已保存');
+}
 async function generateSegment(row:any){await audioApi.generateSegment(row.id);ElMessage.success('片段生成任务已创建');await loadAudio();}
 async function removeSegment(row:any){await ElMessageBox.confirm('确认删除第 '+row.order+' 条已生成音频？脚本文本不会删除。','删除音频片段',{type:'warning'});await audioApi.removeSegment(row.id);ElMessage.success('音频片段已删除');await loadAudio();}
 async function mergeAudio(){await audioApi.merge(id);ElMessage.success('音频合并任务已进入任务中枢');}
@@ -73,6 +77,32 @@ onUnmounted(()=>audioTimer&&clearInterval(audioTimer));
     </div>
 
     <div v-if="activeTab==='characters'" class="character-grid">
+      <article class="character-card narrator-card">
+        <div class="avatar-holo narrator-avatar">旁</div>
+        <div class="character-main">
+          <h3>旁白</h3>
+          <span>小说级默认声线 · 用于所有旁白脚本</span>
+          <p>旁白不作为普通人物写入角色表，由当前小说单独绑定默认音色。</p>
+          <el-select
+            v-model="detail.novel.narratorVoiceProfileId"
+            placeholder="绑定旁白音色档案"
+            clearable
+            filterable
+            @change="saveNarratorVoice"
+          >
+            <el-option
+              v-for="voice in voiceProfiles"
+              :key="voice.id"
+              :label="voice.name+' · '+voice.language"
+              :value="voice.id"
+            >
+              <span>{{voice.name}}</span>
+              <span style="float:right;color:var(--muted);font-size:11px">{{voice.status}}</span>
+            </el-option>
+          </el-select>
+        </div>
+      </article>
+
       <article v-for="character in detail.characters" :key="character.id" class="character-card">
         <div class="avatar-holo">{{character.name.slice(0,1)}}</div>
         <div class="character-main">

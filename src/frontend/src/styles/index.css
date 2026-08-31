@@ -924,3 +924,14 @@ html[data-theme="light"] .list-pager .el-pagination.is-background .el-pager li.i
   .voice-create-dialog .voice-form-grid{grid-template-columns:1fr}
   .voice-head-actions{gap:8px}
 }
+
+
+/* 小说级旁白音色卡 */
+.narrator-card{
+  border-color:color-mix(in srgb,var(--accent) 34%,var(--line));
+  background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 10%,var(--panel-strong)),var(--panel));
+}
+.narrator-avatar{
+  background:radial-gradient(circle at 35% 30%,color-mix(in srgb,var(--accent) 58%,white),color-mix(in srgb,var(--accent) 35%,#4350ba) 48%,rgba(31,20,66,.82));
+  box-shadow:0 0 26px color-mix(in srgb,var(--accent) 22%,transparent);
+}

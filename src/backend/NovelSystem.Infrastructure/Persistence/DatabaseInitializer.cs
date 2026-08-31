@@ -12,6 +12,7 @@ public static class DatabaseInitializer
     {
         await db.Database.EnsureCreatedAsync(cancellationToken);
         await EnsureVoiceProfileSchemaAsync(db, cancellationToken);
+        await EnsureNovelNarratorVoiceSchemaAsync(db, cancellationToken);
         await EnsureJobCheckpointSchemaAsync(db, cancellationToken);
         await EnsureAiTokenUsageSchemaAsync(db, cancellationToken);
 
@@ -68,6 +69,16 @@ public static class DatabaseInitializer
         var characterColumns = await GetColumnsAsync(db, "Characters", cancellationToken);
         if (!characterColumns.Contains("VoiceProfileId", StringComparer.OrdinalIgnoreCase))
             await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Characters" ADD COLUMN "VoiceProfileId" INTEGER NULL;""", cancellationToken);
+    }
+
+
+    private static async Task EnsureNovelNarratorVoiceSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
+        var columns = await GetColumnsAsync(db, "Novels", cancellationToken);
+        if (!columns.Contains("NarratorVoiceProfileId", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync(
+                """ALTER TABLE "Novels" ADD COLUMN "NarratorVoiceProfileId" INTEGER NULL;""",
+                cancellationToken);
     }
 
     private static async Task EnsureJobCheckpointSchemaAsync(AppDbContext db, CancellationToken cancellationToken)

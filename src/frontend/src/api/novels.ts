@@ -8,5 +8,6 @@ export const novelApi={
   remove:(id:number)=>http.delete('/novels/'+id),
   analyze:(id:number|string)=>http.post('/novels/'+id+'/analyze').then(r=>r.data),
   generateAudio:(id:number|string)=>http.post('/novels/'+id+'/audio').then(r=>r.data),
-  updateCharacter:(id:number,payload:any)=>http.put('/characters/'+id,payload).then(r=>r.data)
+  updateCharacter:(id:number,payload:any)=>http.put('/characters/'+id,payload).then(r=>r.data),
+  updateNarratorVoice:(id:number|string,voiceProfileId:number|null)=>http.put('/novels/'+id+'/narrator-voice',{voiceProfileId}).then(r=>r.data)
 };

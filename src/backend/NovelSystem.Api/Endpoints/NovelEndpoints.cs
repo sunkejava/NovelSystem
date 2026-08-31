@@ -130,6 +130,20 @@ public static class NovelEndpoints
             return Results.Ok(new { items, total, page, pageSize, speakers });
         });
 
+        group.MapPut("/{id:long}/narrator-voice", async (long id, UpdateNarratorVoiceRequest request, AppDbContext db) =>
+        {
+            var novel = await db.Novels.FindAsync(id);
+            if (novel is null) return Results.NotFound();
+
+            if (request.VoiceProfileId.HasValue &&
+                !await db.VoiceProfiles.AnyAsync(x => x.Id == request.VoiceProfileId.Value))
+                return Results.BadRequest(new { message = "所选旁白音色档案不存在。" });
+
+            novel.NarratorVoiceProfileId = request.VoiceProfileId;
+            await db.SaveChangesAsync();
+            return Results.Ok(new { novel.Id, novel.NarratorVoiceProfileId });
+        });
+
         group.MapPut("/{id:long}", async (long id, UpdateNovelRequest request, AppDbContext db) =>
         {
             var novel = await db.Novels.FindAsync(id);
