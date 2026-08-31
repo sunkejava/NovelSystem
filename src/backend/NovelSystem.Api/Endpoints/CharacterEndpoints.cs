@@ -78,10 +78,7 @@ public static class CharacterEndpoints
 
                 人物：
                 """ + JsonSerializer.Serialize(characterData) +
-                "
-
-可用音色：
-" + JsonSerializer.Serialize(voiceData),
+                "\n\n可用音色：\n" + JsonSerializer.Serialize(voiceData),
                 new AiCallContext(novelId, null, "AutoMatchCharacterVoices"),
                 ct);
 
