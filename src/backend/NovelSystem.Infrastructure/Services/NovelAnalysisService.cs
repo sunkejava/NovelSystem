@@ -226,9 +226,11 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
         CancellationToken cancellationToken,
         int depth = 0)
     {
+        string? raw = null;
+
         try
         {
-            var raw = await aiClient.ChatJsonTrackedAsync(
+            raw = await aiClient.ChatJsonTrackedAsync(
                 AnalysisSystemPrompt,
                 AnalysisInstruction + chunk,
                 new AiCallContext(
@@ -241,39 +243,145 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
 
             return ParseCompactResult(raw);
         }
-        catch (JsonException ex) when (chunk.Length > 1200 && depth < 4)
+        catch (JsonException ex)
         {
-            var parts = SplitForRetry(chunk).ToList();
-            if (parts.Count <= 1)
-                throw new InvalidOperationException(
-                    $"LLM 返回的 JSON 不完整，且当前片段无法继续安全拆分。片段长度={chunk.Length}。",
-                    ex);
-
-            var merged = new CompactAnalysisResult();
-
-            foreach (var part in parts)
-            {
-                var child = await AnalyzeChunkWithFallbackAsync(
-                    part,
+            // 未闭合对象/数组通常说明输出被 max_tokens 或上下文上限截断。
+            // 这类问题通过继续拆小当前片段最有效。
+            if (IsLikelyTruncatedJson(ex, raw) && chunk.Length > 700 && depth < 6)
+                return await SplitAndAnalyzeAsync(
+                    chunk,
                     novelId,
                     jobId,
                     chunkIndex,
                     chunkTotal,
                     cancellationToken,
-                    depth + 1);
+                    depth,
+                    ex);
 
-                merged.Characters.AddRange(child.Characters);
-                merged.Scripts.AddRange(child.Scripts);
+            // 冒号、逗号、引号位置错误属于“模型生成了错误 JSON”，
+            // 对这种情况继续二分通常没有意义。先让模型只修 JSON，不重新分析原文。
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                try
+                {
+                    var repaired = await aiClient.ChatTrackedAsync(
+                        "你是JSON修复器。只输出修复后的合法JSON，不解释、不使用Markdown，不增加或删除业务内容。",
+                        """
+                        修复下面的小说解析结果，使其成为严格合法的 JSON。
+                        顶层必须保持 {"c":[...],"s":[...]}。
+                        c 的每项必须是 [姓名,性别,性格,简介]。
+                        s 的每项必须是 [说话人,原文朗读文本,情绪]。
+                        仅修复引号、反斜杠、逗号、冒号、括号等 JSON 语法，不重新创作内容。
+
+                        待修复内容：
+                        """ + raw,
+                        new AiCallContext(
+                            novelId,
+                            jobId,
+                            "AnalyzeNovelJsonRepair",
+                            chunkIndex,
+                            chunkTotal),
+                        cancellationToken);
+
+                    return ParseCompactResult(repaired);
+                }
+                catch (JsonException)
+                {
+                    // 修复输出仍非法，继续走强约束重试。
+                }
             }
 
-            return merged;
+            // 第二层兜底：只对当前失败片段临时启用 response_format=json_object，
+            // 正常解析仍保持快速模式，不影响整体吞吐。
+            try
+            {
+                var strictRaw = await aiClient.ChatJsonStrictTrackedAsync(
+                    AnalysisSystemPrompt,
+                    AnalysisInstruction + chunk,
+                    new AiCallContext(
+                        novelId,
+                        jobId,
+                        "AnalyzeNovelChunkStrict",
+                        chunkIndex,
+                        chunkTotal),
+                    cancellationToken);
+
+                return ParseCompactResult(strictRaw);
+            }
+            catch (Exception strictEx) when (chunk.Length > 700 && depth < 6)
+            {
+                // 某些 llama.cpp / 模型组合的强约束解析也可能失败。
+                // 最后才缩小片段，避免单个坏 JSON 阻塞整本小说。
+                return await SplitAndAnalyzeAsync(
+                    chunk,
+                    novelId,
+                    jobId,
+                    chunkIndex,
+                    chunkTotal,
+                    cancellationToken,
+                    depth,
+                    strictEx);
+            }
+            catch (Exception strictEx)
+            {
+                throw new InvalidOperationException(
+                    $"LLM 连续返回非法 JSON。片段长度={chunk.Length}，已尝试普通解析、JSON修复和强约束重试。建议检查模型/chat template，或临时开启设置中的“JSON 约束解码”。",
+                    strictEx);
+            }
         }
-        catch (JsonException ex)
-        {
+    }
+
+    private async Task<CompactAnalysisResult> SplitAndAnalyzeAsync(
+        string chunk,
+        long novelId,
+        long jobId,
+        int chunkIndex,
+        int chunkTotal,
+        CancellationToken cancellationToken,
+        int depth,
+        Exception sourceException)
+    {
+        var parts = SplitForRetry(chunk).ToList();
+        if (parts.Count <= 1)
             throw new InvalidOperationException(
-                $"LLM 返回的 JSON 不完整或格式错误。片段长度={chunk.Length}。建议提高“解析最大输出 Token”或减小“小说自动拆分长度”。",
-                ex);
+                $"LLM 返回的 JSON 无法恢复，当前片段无法继续安全拆分。片段长度={chunk.Length}。",
+                sourceException);
+
+        var merged = new CompactAnalysisResult();
+
+        foreach (var part in parts)
+        {
+            var child = await AnalyzeChunkWithFallbackAsync(
+                part,
+                novelId,
+                jobId,
+                chunkIndex,
+                chunkTotal,
+                cancellationToken,
+                depth + 1);
+
+            merged.Characters.AddRange(child.Characters);
+            merged.Scripts.AddRange(child.Scripts);
         }
+
+        return merged;
+    }
+
+    private static bool IsLikelyTruncatedJson(JsonException exception, string? raw)
+    {
+        var message = exception.Message;
+        if (message.Contains("open JSON object or array", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Expected depth to be zero", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("end of data", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("incomplete", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        var text = raw.TrimEnd();
+        // 明显没有闭合顶层对象，通常就是生成被截断。
+        return text.StartsWith('{') && !text.EndsWith('}');
     }
 
     /// <summary>

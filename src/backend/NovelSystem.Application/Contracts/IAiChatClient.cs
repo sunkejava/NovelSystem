@@ -28,4 +28,11 @@ public interface IAiChatClient
         string userPrompt,
         AiCallContext context,
         CancellationToken cancellationToken = default);
+
+    /// <summary>强制 JSON 约束的跟踪调用，仅用于普通 JSON 修复失败后的兜底。</summary>
+    Task<string> ChatJsonStrictTrackedAsync(
+        string systemPrompt,
+        string userPrompt,
+        AiCallContext context,
+        CancellationToken cancellationToken = default);
 }

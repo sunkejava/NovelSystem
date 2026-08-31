@@ -38,14 +38,22 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
         string userPrompt,
         AiCallContext context,
         CancellationToken cancellationToken = default)
-        => SendAsync(systemPrompt, userPrompt, jsonMode: true, context, cancellationToken);
+        => SendAsync(systemPrompt, userPrompt, jsonMode: true, context, cancellationToken, forceJsonResponseFormat: false);
+
+    public Task<string> ChatJsonStrictTrackedAsync(
+        string systemPrompt,
+        string userPrompt,
+        AiCallContext context,
+        CancellationToken cancellationToken = default)
+        => SendAsync(systemPrompt, userPrompt, jsonMode: true, context, cancellationToken, forceJsonResponseFormat: true);
 
     private async Task<string> SendAsync(
         string systemPrompt,
         string userPrompt,
         bool jsonMode,
         AiCallContext? context,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool forceJsonResponseFormat = false)
     {
         var settings = new SettingReader(db);
         var baseUrl = settings.Get("AiBaseUrl", "http://127.0.0.1:8080/v1").TrimEnd('/');
@@ -114,7 +122,7 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
         };
 
         object payload;
-        if (jsonMode && useJsonResponseFormat)
+        if (jsonMode && (useJsonResponseFormat || forceJsonResponseFormat))
         {
             payload = new
             {
