@@ -45,6 +45,7 @@ public static class SettingEndpoints
             var settings = db.Settings.ToDictionary(x => x.Key, x => x.Value);
             var baseUrl = settings.GetValueOrDefault("AiBaseUrl", "http://127.0.0.1:8080/v1").TrimEnd('/');
             var model = settings.GetValueOrDefault("AiModel", "local-model");
+            var provider = settings.GetValueOrDefault("AiProvider", "LocalLlamaCpp");
             var apiKey = settings.GetValueOrDefault("AiApiKey", string.Empty);
             var timeoutText = settings.GetValueOrDefault("AiTimeoutSeconds", "120");
             var timeoutSeconds = int.TryParse(timeoutText, out var timeout) ? Math.Clamp(timeout, 10, 3600) : 120;
@@ -63,7 +64,7 @@ public static class SettingEndpoints
                     {
                         model,
                         messages = new[] { new { role = "user", content = "只回复 OK" } },
-                        temperature = 0,
+                        temperature = provider.Equals("LocalLlamaCpp", StringComparison.OrdinalIgnoreCase) ? 0 : 0.1,
                         max_tokens = 8,
                         stream = false
                     },

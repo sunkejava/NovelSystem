@@ -47,7 +47,7 @@ onMounted(load);
 </script>
 
 <template><div class="page-fill token-page">
-<PageHeader eyebrow="LLM TELEMETRY" title="Token 统计中心" description="统计本地 llama.cpp 在人物脚本解析、写法学习、AI 创作等操作中的 Token 消耗与性能。">
+<PageHeader eyebrow="LLM TELEMETRY" title="Token 统计中心" description="统计本地/第三方 LLM 的真实 Token、AI 创作消耗，以及 Qwen3-TTS 文本 Token 估算与性能；同时保留 JSON 异常诊断样本。">
   <el-button class="ghost-button" @click="openErrors"><el-icon><WarningFilled/></el-icon>JSON异常样本</el-button>
   <el-button class="ghost-button" @click="load"><el-icon><Refresh/></el-icon>刷新</el-button>
 </PageHeader>
@@ -86,7 +86,7 @@ onMounted(load);
       <el-table :data="summary.byOperation||[]" class="cyber-table" height="320">
         <el-table-column prop="operation" label="操作" min-width="180"/>
         <el-table-column prop="calls" label="调用" width="80"/>
-        <el-table-column label="总 Token" width="120"><template #default="{row}">{{token(row.totalTokens)}}</template></el-table-column>
+        <el-table-column label="总 Token" width="120"><template #default="{row}">{{token(row.totalTokens)}}<small v-if="row.estimatedCalls" class="estimated-chip">含估算</small></template></el-table-column>
         <el-table-column label="耗时" width="120"><template #default="{row}">{{duration(row.elapsedMilliseconds)}}</template></el-table-column>
         <el-table-column label="输出 T/S" width="100"><template #default="{row}">{{Number(row.averageCompletionTokensPerSecond||0).toFixed(1)}}</template></el-table-column>
       </el-table>

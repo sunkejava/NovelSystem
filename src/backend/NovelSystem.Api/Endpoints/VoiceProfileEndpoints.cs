@@ -245,9 +245,7 @@ public static class VoiceProfileEndpoints
                 {"description":"一句完整的声音描述","tags":["标签1","标签2","标签3"]}
                 标签优先覆盖：性别、年龄感、音高、音色质感、语速、情绪气质、适合角色类型。
                 音色名称：
-                """ + entity.Name + "
-语言：" + entity.Language + "
-参考文本：" + entity.ReferenceText,
+                """ + entity.Name + "\n语言：" + entity.Language + "\n参考文本：" + entity.ReferenceText,
                 new AiCallContext(null, null, "DescribeVoiceProfile"),
                 cancellationToken);
 

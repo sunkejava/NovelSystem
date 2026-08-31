@@ -113,6 +113,8 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
             new { role = "user", content = userPrompt }
         };
 
+        var requestTemperature = jsonMode ? (isLocalLlamaCpp ? 0.0 : 0.1) : 0.25;
+
         object payload;
         if (isLocalLlamaCpp)
         {
@@ -122,7 +124,7 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
                 {
                     model,
                     messages,
-                    temperature = jsonMode ? 0.0 : 0.25,
+                    temperature = requestTemperature,
                     max_tokens = maxTokens,
                     stream = false,
                     cache_prompt = cachePrompt,
@@ -134,7 +136,7 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
                 {
                     model,
                     messages,
-                    temperature = jsonMode ? 0.0 : 0.25,
+                    temperature = requestTemperature,
                     max_tokens = maxTokens,
                     stream = false,
                     cache_prompt = cachePrompt,
@@ -150,7 +152,7 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
                 {
                     model,
                     messages,
-                    temperature = jsonMode ? 0.0 : 0.25,
+                    temperature = requestTemperature,
                     max_tokens = maxTokens,
                     stream = false,
                     response_format = new { type = "json_object" }
@@ -159,7 +161,7 @@ public sealed class LlamaCppChatClient(IHttpClientFactory httpClientFactory, App
                 {
                     model,
                     messages,
-                    temperature = jsonMode ? 0.0 : 0.25,
+                    temperature = requestTemperature,
                     max_tokens = maxTokens,
                     stream = false
                 };
