@@ -61,6 +61,7 @@ public static class TokenUsageEndpoints
                     x.CompletionTokensPerSecond,
                     x.InputCharacters,
                     x.OutputCharacters,
+                    x.IsEstimated,
                     x.Success,
                     x.Error,
                     CreatedAt = JobTimingCalculator.ToUtcIso(x.CreatedAt)
@@ -99,7 +100,8 @@ public static class TokenUsageEndpoints
                     CachedPromptTokens = g.Sum(x => x.CachedPromptTokens),
                     ElapsedMilliseconds = g.Sum(x => x.ElapsedMilliseconds),
                     AverageElapsedMilliseconds = g.Average(x => (double)x.ElapsedMilliseconds),
-                    AverageCompletionTokensPerSecond = g.Average(x => x.CompletionTokensPerSecond)
+                    AverageCompletionTokensPerSecond = g.Average(x => x.CompletionTokensPerSecond),
+                    EstimatedCalls = g.Count(x => x.IsEstimated)
                 })
                 .FirstOrDefaultAsync();
 
@@ -113,7 +115,8 @@ public static class TokenUsageEndpoints
                     CompletionTokens = g.Sum(x => x.CompletionTokens),
                     TotalTokens = g.Sum(x => x.TotalTokens),
                     ElapsedMilliseconds = g.Sum(x => x.ElapsedMilliseconds),
-                    AverageCompletionTokensPerSecond = g.Average(x => x.CompletionTokensPerSecond)
+                    AverageCompletionTokensPerSecond = g.Average(x => x.CompletionTokensPerSecond),
+                    EstimatedCalls = g.Count(x => x.IsEstimated)
                 })
                 .OrderByDescending(x => x.TotalTokens)
                 .ToListAsync();
@@ -169,7 +172,8 @@ public static class TokenUsageEndpoints
                     CachedPromptTokens = 0,
                     ElapsedMilliseconds = 0L,
                     AverageElapsedMilliseconds = 0d,
-                    AverageCompletionTokensPerSecond = 0d
+                    AverageCompletionTokensPerSecond = 0d,
+                    EstimatedCalls = 0
                 },
                 byOperation,
                 byNovel,

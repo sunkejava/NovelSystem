@@ -46,6 +46,19 @@ async function load(){
 async function loadVoices(){const r=await voiceApi.list(voiceQuery.value);profiles.value=r.items;voiceTotal.value=r.total;}
 function searchVoices(){voiceQuery.value.page=1;loadVoices();}
 function resetVoiceQuery(){voiceQuery.value={page:1,pageSize:12,keyword:'',language:'',status:''};loadVoices();}
+function applyAiProviderPreset(provider:string){
+  const presets:Record<string,{baseUrl:string;model?:string}>={
+    LocalLlamaCpp:{baseUrl:'http://127.0.0.1:8888/v1'},
+    Zhipu:{baseUrl:'https://open.bigmodel.cn/api/paas/v4',model:'glm-5.2'},
+    Qwen:{baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',model:'qwen3-max'},
+    Doubao:{baseUrl:'https://ark.cn-beijing.volces.com/api/v3',model:'doubao-seed-2-0-lite-260215'},
+    DeepSeek:{baseUrl:'https://api.deepseek.com',model:'deepseek-v4-flash'}
+  };
+  const preset=presets[provider];
+  if(!preset)return;
+  form.value.AiBaseUrl=preset.baseUrl;
+  if(preset.model)form.value.AiModel=preset.model;
+}
 async function save(){await settingApi.save(form.value);ElMessage.success('模型与运行参数已保存');}
 async function testAi(){testingAi.value=true;try{await settingApi.save(form.value);aiTest.value=await settingApi.testAi();aiTest.value.online?ElMessage.success('LLM 连接成功，响应 '+aiTest.value.latencyMs+' ms'):ElMessage.error('LLM 连接失败：'+(aiTest.value.error||'未知错误'));}finally{testingAi.value=false;}}
 async function testTts(){testingTts.value=true;try{await settingApi.save(form.value);ttsTest.value=await settingApi.testTts();ttsTest.value.online?ElMessage.success('Qwen3-TTS 服务在线，响应 '+ttsTest.value.latencyMs+' ms'):ElMessage.error('Qwen3-TTS 连接失败：'+(ttsTest.value.error||'未知错误'));}finally{testingTts.value=false;}}
@@ -109,7 +122,7 @@ onMounted(load);
           <el-form label-position="top">
             <div class="endpoint-grid">
               <el-form-item label="AI 供应商">
-                <el-select v-model="form.AiProvider" class="full-width">
+                <el-select v-model="form.AiProvider" class="full-width" @change="applyAiProviderPreset">
                   <el-option label="本地 llama.cpp" value="LocalLlamaCpp"/>
                   <el-option label="智谱 GLM（OpenAI兼容）" value="Zhipu"/>
                   <el-option label="阿里千问 DashScope（OpenAI兼容）" value="Qwen"/>
@@ -120,6 +133,9 @@ onMounted(load);
               </el-form-item>
               <el-form-item label="API Base URL"><el-input v-model="form.AiBaseUrl"/></el-form-item>
               <el-form-item label="API Key"><el-input v-model="form.AiApiKey" type="password" show-password placeholder="本地 llama.cpp 可留空"/></el-form-item>
+              <div class="provider-hint">
+                第三方模型统一使用 OpenAI-compatible Chat Completions。切换供应商会填入推荐 Base URL 和示例模型名，可按账号实际可用模型修改。
+              </div>
               <el-form-item label="Model / Alias"><el-input v-model="form.AiModel"/></el-form-item>
               <el-form-item label="请求超时（秒）"><el-input v-model="form.AiTimeoutSeconds" type="number"/></el-form-item>
               <el-form-item label="小说自动拆分长度（字符）"><el-input v-model="form.AiChunkSize" type="number"/></el-form-item>
