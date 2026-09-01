@@ -241,7 +241,43 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                     chunkTotal),
                 cancellationToken);
 
-            return ParseCompactResult(raw);
+            try
+            {
+                return ParseCompactResult(raw);
+            }
+            catch (JsonException parseEx)
+            {
+                // 第一层本地容错：根据 JsonException 的行号/UTF-8 字节位置定位异常附近字符，
+                // 仅修复 JSON 字符串内部可明确判断的未转义双引号、反斜杠、换行/制表符和控制字符。
+                // 这一步不调用 LLM，成本最低，也不会因为重新生成而改变原脚本内容。
+                if (TryRepairJsonEscapes(raw, parseEx, out var locallyRepaired, out var repairSummary))
+                {
+                    try
+                    {
+                        var repairedResult = ParseCompactResult(locallyRepaired);
+                        var diagnostic = await SaveAnalysisErrorAsync(
+                            novelId,
+                            jobId,
+                            chunkIndex,
+                            chunkTotal,
+                            depth,
+                            "LocalEscapeRepair",
+                            chunk,
+                            raw,
+                            new InvalidOperationException(parseEx.Message + Environment.NewLine + repairSummary, parseEx),
+                            cancellationToken);
+                        diagnostic.Recovered = true;
+                        await db.SaveChangesAsync(cancellationToken);
+                        return repairedResult;
+                    }
+                    catch (JsonException)
+                    {
+                        // 本地最小修复不足时继续进入现有 LLM JSON 修复 / 强约束 / 语义拆分流程。
+                    }
+                }
+
+                throw;
+            }
         }
         catch (JsonException ex)
         {
@@ -300,7 +336,7 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                             chunkTotal),
                         cancellationToken);
 
-                    var repairedResult = ParseCompactResult(repaired);
+                    var repairedResult = ParseCompactResultWithEscapeRepair(repaired);
                     diagnostic.Recovered = true;
                     await db.SaveChangesAsync(cancellationToken);
                     return repairedResult;
@@ -326,7 +362,7 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                         chunkTotal),
                     cancellationToken);
 
-                var strictResult = ParseCompactResult(strictRaw);
+                var strictResult = ParseCompactResultWithEscapeRepair(strictRaw);
                 diagnostic.Recovered = true;
                 await db.SaveChangesAsync(cancellationToken);
                 return strictResult;
@@ -428,6 +464,289 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
             yield return left;
         if (!string.IsNullOrWhiteSpace(right))
             yield return right;
+    }
+
+    /// <summary>
+    /// 对 LLM 返回的 JSON 做一次“只修转义、不改业务内容”的本地容错解析。
+    /// </summary>
+    private static CompactAnalysisResult ParseCompactResultWithEscapeRepair(string raw)
+    {
+        try
+        {
+            return ParseCompactResult(raw);
+        }
+        catch (JsonException ex) when (TryRepairJsonEscapes(raw, ex, out var repaired, out _))
+        {
+            return ParseCompactResult(repaired);
+        }
+    }
+
+    /// <summary>
+    /// 根据 System.Text.Json 返回的 LineNumber / BytePositionInLine 定位异常，
+    /// 并对整个 JSON 做保守的字符串状态扫描。
+    ///
+    /// 只处理以下“模型最常见”的非法 JSON：
+    /// 1. JSON 字符串内部出现未转义的英文双引号，例如："他说："你好""；
+    /// 2. 字符串内部出现非法反斜杠，例如 Windows 路径或 \q；
+    /// 3. 字符串内部出现真实换行、Tab、回车或其他 U+0000~U+001F 控制字符。
+    ///
+    /// 不会修改字符串外的结构字符，也不会尝试补括号/逗号，因此不会掩盖真正的结构化输出错误。
+    /// </summary>
+    private static bool TryRepairJsonEscapes(
+        string raw,
+        JsonException exception,
+        out string repaired,
+        out string summary)
+    {
+        repaired = raw;
+        summary = string.Empty;
+
+        var json = NormalizeJson(raw);
+        if (string.IsNullOrWhiteSpace(json))
+            return false;
+
+        var errorCharIndex = GetCharIndexFromJsonException(json, exception);
+        var builder = new System.Text.StringBuilder(json.Length + 32);
+        var repairs = new List<string>();
+        var inString = false;
+        var changed = false;
+
+        for (var i = 0; i < json.Length; i++)
+        {
+            var ch = json[i];
+
+            if (!inString)
+            {
+                builder.Append(ch);
+                if (ch == '"')
+                    inString = true;
+                continue;
+            }
+
+            if (ch == '\\')
+            {
+                // JSON 合法转义：\" \\ \/ \b \f \n \r \t \uXXXX
+                if (i + 1 < json.Length)
+                {
+                    var next = json[i + 1];
+                    if (next is '"' or '\\' or '/' or 'b' or 'f' or 'n' or 'r' or 't')
+                    {
+                        builder.Append(ch);
+                        builder.Append(next);
+                        i++;
+                        continue;
+                    }
+
+                    if (next == 'u' && HasFourHexDigits(json, i + 2))
+                    {
+                        builder.Append(ch);
+                        builder.Append('u');
+                        builder.Append(json, i + 2, 4);
+                        i += 5;
+                        continue;
+                    }
+
+                    // 非法 \x / Windows 路径等：把当前反斜杠本身转义为 \\，
+                    // 后一个字符保持原样，避免修改业务文本。
+                    builder.Append("\\\\");
+                    changed = true;
+                    repairs.Add($"index={i}: 非法反斜杠转义 -> \\\\");
+                    continue;
+                }
+
+                // 字符串末尾孤立反斜杠。
+                builder.Append("\\\\");
+                changed = true;
+                repairs.Add($"index={i}: 末尾孤立反斜杠 -> \\\\");
+                continue;
+            }
+
+            if (ch == '"')
+            {
+                // 字符串真正结束后，下一个非空白字符必须是 JSON 结构字符。
+                // 如果后面仍是普通正文字符，则这个双引号大概率属于小说对白，模型漏写了反斜杠。
+                if (!LooksLikeStringTerminator(json, i + 1))
+                {
+                    builder.Append("\\"");
+                    changed = true;
+                    repairs.Add($"index={i}: 字符串内部未转义双引号 -> \\\"");
+                    continue;
+                }
+
+                builder.Append(ch);
+                inString = false;
+                continue;
+            }
+
+            if (ch == '\n')
+            {
+                builder.Append("\\n");
+                changed = true;
+                repairs.Add($"index={i}: 字符串内部换行 -> \\n");
+                continue;
+            }
+
+            if (ch == '\r')
+            {
+                builder.Append("\\r");
+                changed = true;
+                repairs.Add($"index={i}: 字符串内部回车 -> \\r");
+                continue;
+            }
+
+            if (ch == '\t')
+            {
+                builder.Append("\\t");
+                changed = true;
+                repairs.Add($"index={i}: 字符串内部 Tab -> \\t");
+                continue;
+            }
+
+            if (ch < 0x20)
+            {
+                builder.Append("\\u");
+                builder.Append(((int)ch).ToString("x4"));
+                changed = true;
+                repairs.Add($"index={i}: 控制字符 U+{(int)ch:X4} -> Unicode 转义");
+                continue;
+            }
+
+            builder.Append(ch);
+        }
+
+        if (!changed)
+        {
+            summary = $"未发现可安全自动转义的字符。异常字符位置≈{errorCharIndex}。";
+            return false;
+        }
+
+        repaired = builder.ToString();
+
+        var nearby = DescribeNearbyCharacters(json, errorCharIndex);
+        var nearestRepairs = repairs
+            .OrderBy(x => DistanceFromRepairIndex(x, errorCharIndex))
+            .Take(8);
+
+        summary =
+            $"本地 JSON 转义修复：原异常 Line={exception.LineNumber}, BytePosition={exception.BytePositionInLine}, " +
+            $"映射字符位置≈{errorCharIndex}。异常附近={nearby}。修复 {repairs.Count} 处：" +
+            string.Join("；", nearestRepairs);
+
+        return true;
+    }
+
+    private static int GetCharIndexFromJsonException(string json, JsonException exception)
+    {
+        var targetLine = Math.Max(0L, exception.LineNumber ?? 0L);
+        var bytePosition = Math.Max(0L, exception.BytePositionInLine ?? 0L);
+
+        var lineStart = 0;
+        long currentLine = 0;
+        for (var i = 0; i < json.Length && currentLine < targetLine; i++)
+        {
+            if (json[i] != '\n') continue;
+            currentLine++;
+            lineStart = i + 1;
+        }
+
+        var lineEnd = json.IndexOf('\n', lineStart);
+        if (lineEnd < 0) lineEnd = json.Length;
+        var line = json[lineStart..lineEnd];
+
+        // BytePositionInLine 是 UTF-8 字节偏移，中文不能直接当 char index 使用。
+        var utf8 = System.Text.Encoding.UTF8;
+        var consumedBytes = 0L;
+        var charOffset = 0;
+        foreach (var rune in line.EnumerateRunes())
+        {
+            var runeBytes = utf8.GetByteCount(rune.ToString());
+            if (consumedBytes + runeBytes > bytePosition)
+                break;
+            consumedBytes += runeBytes;
+            charOffset += rune.Utf16SequenceLength;
+        }
+
+        return Math.Clamp(lineStart + charOffset, 0, Math.Max(0, json.Length - 1));
+    }
+
+    private static bool HasFourHexDigits(string value, int start)
+    {
+        if (start + 4 > value.Length) return false;
+        for (var i = start; i < start + 4; i++)
+            if (!Uri.IsHexDigit(value[i]))
+                return false;
+        return true;
+    }
+
+    private static int NextNonWhitespaceIndex(string value, int start)
+    {
+        for (var i = start; i < value.Length; i++)
+            if (!char.IsWhiteSpace(value[i]))
+                return i;
+        return -1;
+    }
+
+    /// <summary>
+    /// 判断当前双引号是否看起来真的是 JSON 字符串结束符。
+    /// 不只检查紧随其后的结构字符，还检查结构字符之后是否仍符合 JSON 语法，
+    /// 避免正文中的："你好",然后…… 被误认为数组元素已经结束。
+    /// </summary>
+    private static bool LooksLikeStringTerminator(string value, int start)
+    {
+        var nextIndex = NextNonWhitespaceIndex(value, start);
+        if (nextIndex < 0)
+            return true;
+
+        var next = value[nextIndex];
+        if (next is ']' or '}')
+            return true;
+
+        if (next == ':')
+        {
+            // 属性名结束后冒号后面必须能开始一个合法 JSON 值。
+            var valueIndex = NextNonWhitespaceIndex(value, nextIndex + 1);
+            if (valueIndex < 0) return false;
+            return IsJsonValueStart(value[valueIndex]);
+        }
+
+        if (next == ',')
+        {
+            // 数组/对象下一个成员通常以字符串、对象、数组、数字、布尔/null 开始，
+            // 或直接闭合。普通中文/英文字母正文不应被当成结构分隔。
+            var followingIndex = NextNonWhitespaceIndex(value, nextIndex + 1);
+            if (followingIndex < 0) return false;
+            var following = value[followingIndex];
+            return following is '"' or '[' or '{' or ']' or '}' or '-' ||
+                   char.IsDigit(following) ||
+                   following is 't' or 'f' or 'n';
+        }
+
+        return false;
+    }
+
+    private static bool IsJsonValueStart(char ch)
+        => ch is '"' or '[' or '{' or '-' ||
+           char.IsDigit(ch) ||
+           ch is 't' or 'f' or 'n';
+
+    private static string DescribeNearbyCharacters(string value, int index)
+    {
+        if (value.Length == 0) return "<empty>";
+        var start = Math.Max(0, index - 24);
+        var length = Math.Min(value.Length - start, 56);
+        return JsonSerializer.Serialize(value.Substring(start, length));
+    }
+
+    private static int DistanceFromRepairIndex(string repair, int target)
+    {
+        const string prefix = "index=";
+        var start = repair.IndexOf(prefix, StringComparison.Ordinal);
+        if (start < 0) return int.MaxValue;
+        start += prefix.Length;
+        var end = repair.IndexOf(':', start);
+        if (end < 0 || !int.TryParse(repair[start..end], out var index))
+            return int.MaxValue;
+        return Math.Abs(index - target);
     }
 
     private static CompactAnalysisResult ParseCompactResult(string raw)
