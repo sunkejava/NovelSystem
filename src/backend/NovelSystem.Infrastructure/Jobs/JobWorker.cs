@@ -426,17 +426,23 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         {
             await EnsureNotStoppingAsync(db, job, cancellationToken);
             var result = await ai.ChatTrackedAsync(
-                "你是小说写作技法研究专家。只提取可复用的写作规律，不复述剧情，不引用长原文。",
+                "你是中文小说写作技法研究专家。所有输出必须使用简体中文，不得使用英文标题、英文小节名、英文术语解释或英文总结；不得复述剧情，不引用长原文。",
                 """
-                分析本片段的：叙事视角、语言与句式、章节/场景节奏、人物塑造、对白方式、
+                请只使用简体中文分析本片段的：叙事视角、语言与句式、章节/场景节奏、人物塑造、对白方式、
                 悬念与信息释放、情绪推进、描写密度、常用转场、禁忌与可复用规则。
-                每项尽量用简洁规则表达，整体控制在1200字以内。
+                每项尽量用简洁中文规则表达，整体控制在1200字以内。
+                禁止输出英文标题、英文段落、英文列表项和中英混排说明。
 
                 小说样本：
                 """ + selected[index],
                 new AiCallContext(novelId, job.Id, "LearnWritingStyleChunk", index + 1, selected.Count),
                 cancellationToken);
 
+            result = await EnsureChineseOutputAsync(
+                ai,
+                result,
+                new AiCallContext(novelId, job.Id, "LearnWritingStyleChunkChineseFix", index + 1, selected.Count),
+                cancellationToken);
             partials.Add(result);
             job.Checkpoint++;
             job.Progress = (int)Math.Round(job.Checkpoint * 100d / job.TotalSteps);
@@ -451,11 +457,16 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
             await EnsureNotStoppingAsync(db, job, cancellationToken);
             var group = partials.Skip(groupIndex).Take(reduceGroupSize).ToList();
             var result = await ai.ChatTrackedAsync(
-                "你是小说风格研究员。合并多段局部分析，去重并保留稳定、反复出现的写作规律。",
-                "请压缩为不超过1800字的风格规则摘要：\n\n" + string.Join("\n\n---\n", group),
+                "你是中文小说风格研究员。所有输出必须使用简体中文，禁止英文标题、英文说明和中英混排。",
+                "请只使用简体中文压缩为不超过1800字的风格规则摘要，去重并保留稳定规律；不要使用英文术语或英文小节名：\n\n" + string.Join("\n\n---\n", group),
                 new AiCallContext(novelId, job.Id, "LearnWritingStyleReduce", reduced.Count + 1, reduceSteps),
                 cancellationToken);
 
+            result = await EnsureChineseOutputAsync(
+                ai,
+                result,
+                new AiCallContext(novelId, job.Id, "LearnWritingStyleReduceChineseFix", reduced.Count + 1, reduceSteps),
+                cancellationToken);
             reduced.Add(result);
             job.Checkpoint++;
             job.Progress = (int)Math.Round(job.Checkpoint * 100d / job.TotalSteps);
@@ -465,15 +476,23 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
 
         await EnsureNotStoppingAsync(db, job, cancellationToken);
         var synthesis = await ai.ChatTrackedAsync(
-            "你是小说写作方法论专家。根据代表性样本的风格摘要，生成稳定、可复用、可指导原创小说生成的写作风格模型。",
+            "你是中文小说写作方法论专家。最终写作风格模型必须全部使用简体中文，不得出现英文标题、英文小节、英文方法名、英文术语解释或中英混排。",
             """
-            请生成：1.风格总览；2.叙事视角；3.语言与句式；4.节奏与章节结构；
+            请全部使用简体中文生成：
+            1.风格总览；2.叙事视角；3.语言与句式；4.节奏与章节结构；
             5.人物塑造；6.对白；7.悬念与信息释放；8.情绪推进；9.描写与转场；
-            10.禁忌；11.可直接给小说生成模型使用的完整提示词模板。
+            10.禁忌；11.可直接给小说生成模型使用的完整中文提示词模板。
+            禁止使用英文标题、英文列表项、英文术语和英文总结。
 
             风格摘要：
             """ + string.Join("\n\n=== REDUCED STYLE ===\n", reduced),
             new AiCallContext(novelId, job.Id, "LearnWritingStyleSynthesis", 1, 1),
+            cancellationToken);
+
+        synthesis = await EnsureChineseOutputAsync(
+            ai,
+            synthesis,
+            new AiCallContext(novelId, job.Id, "LearnWritingStyleSynthesisChineseFix", 1, 1),
             cancellationToken);
 
         var style = new WritingStyle
@@ -590,9 +609,11 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
             await EnsureNotStoppingAsync(db, job, cancellationToken);
 
             generated.Outline = await ai.ChatTrackedAsync(
-                "你是中文长篇小说总编剧。制定可长期维持人物一致性、冲突升级和伏笔回收的原创创作蓝图。",
+                "你是中文长篇小说总编剧。所有输出必须使用简体中文，禁止英文标题、英文段落、英文小节名和中英混排；即使参考风格中包含英文，也只能吸收写作规律，不能复制英文表达。",
                 (style?.PromptTemplate ?? string.Empty) +
                 """
+                
+                强制语言要求：最终创作蓝图必须全部使用简体中文。参考风格里若存在英文标题或英文术语，请转换为自然中文，不得原样输出。
                 
                 请先制定全书创作蓝图。不要直接写正文。
                 当章节很多时不要逐章展开到很长，而是用“故事阶段/篇章弧 + 关键章节节点”的方式规划，
@@ -601,6 +622,12 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
                 
                 """ + constraints,
                 new AiCallContext(generated.SourceNovelId, job.Id, "GenerateNovelOutline"),
+                cancellationToken);
+
+            generated.Outline = await EnsureChineseOutputAsync(
+                ai,
+                generated.Outline,
+                new AiCallContext(generated.SourceNovelId, job.Id, "GenerateNovelOutlineChineseFix"),
                 cancellationToken);
 
             job.Checkpoint = 1;
@@ -624,9 +651,11 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
                     : generated.Content[^5000..];
 
             var chapter = await ai.ChatTrackedAsync(
-                "你是专业中文长篇小说作者。只输出当前章节正文，不解释写作过程，不提前生成后续章节。",
+                "你是专业中文长篇小说作者。只输出简体中文小说正文，不解释写作过程，不提前生成后续章节。禁止英文标题、英文段落、英文提示语和中英混排；参考风格中的英文内容只能理解其含义，必须转化为中文表达。",
                 (style?.PromptTemplate ?? string.Empty) +
                 $"""
+                
+                强制语言要求：本章必须全部使用简体中文。除无法替代的专有符号外，不得出现英文单词、英文句子、英文小节名或英文说明。
                 
                 {constraints}
                 
@@ -650,6 +679,14 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
                     chapterCount),
                 cancellationToken);
 
+            var chapterContext = new AiCallContext(
+                generated.SourceNovelId,
+                job.Id,
+                "GenerateNovelChapterChineseFix",
+                chapterNumber,
+                chapterCount);
+            chapter = await EnsureChineseOutputAsync(ai, chapter, chapterContext, cancellationToken);
+
             if (!string.IsNullOrWhiteSpace(generated.Content))
                 generated.Content += Environment.NewLine + Environment.NewLine;
 
@@ -669,6 +706,51 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         job.Result = $"generated:{generated.Id}";
         JobTimingCalculator.Refresh(job);
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static async Task<string> EnsureChineseOutputAsync(
+        IAiChatClient ai,
+        string content,
+        AiCallContext context,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(content) || !ContainsAbnormalEnglish(content))
+            return content;
+
+        var rewritten = await ai.ChatTrackedAsync(
+            "你是中文文本校对器。必须保持原意、结构、人物、情节和写作规则不变，只把异常英文内容完整转换为自然简体中文。禁止解释修改过程。",
+            """
+            将下面内容校正为纯简体中文：
+            1. 保持原有信息、层级、顺序、人物关系和剧情不变；
+            2. 英文标题、英文小节名、英文术语、英文说明全部转换成自然中文；
+            3. 不新增剧情，不删减信息，不做总结；
+            4. 只输出校正后的中文正文。
+
+            待校正内容：
+            """ + content,
+            context,
+            cancellationToken);
+
+        return rewritten.Trim();
+    }
+
+    private static bool ContainsAbnormalEnglish(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return false;
+
+        // 连续 3 个以上拉丁字母通常代表英文单词/标题。
+        // 单个型号、变量符号等不会触发整段重写。
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            content,
+            @"[A-Za-z]{3,}",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        if (matches.Count == 0)
+            return false;
+
+        var latinLetters = matches.Sum(x => x.Length);
+        return matches.Count >= 2 || latinLetters >= 12;
     }
 
     private static async Task EnsureNotStoppingAsync(
