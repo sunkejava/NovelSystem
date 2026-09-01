@@ -73,6 +73,31 @@ public static class JobEndpoints
             return Results.Ok(new { items, total, page, pageSize, summary });
         });
 
+        group.MapGet("/{id:long}", async (long id, AppDbContext db) =>
+        {
+            var x = await db.Jobs.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
+            if (x is null) return Results.NotFound();
+
+            return Results.Ok(new
+            {
+                x.Id,
+                x.Type,
+                x.Status,
+                x.Progress,
+                x.Checkpoint,
+                x.TotalSteps,
+                x.RetryCount,
+                x.Result,
+                x.Error,
+                createdAt = JobTimingCalculator.ToUtcIso(x.CreatedAt),
+                startedAt = JobTimingCalculator.ToUtcIso(x.StartedAt),
+                finishedAt = JobTimingCalculator.ToUtcIso(x.FinishedAt),
+                x.ElapsedMilliseconds,
+                x.AverageStepMilliseconds,
+                estimatedCompletionAt = JobTimingCalculator.ToUtcIso(x.EstimatedCompletionAt)
+            });
+        });
+
         group.MapPost("/{id:long}/stop", async (long id, AppDbContext db) =>
         {
             var job = await db.Jobs.FindAsync(id);

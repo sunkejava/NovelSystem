@@ -114,6 +114,15 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
                         cancellationToken);
                     break;
 
+                case "GenerateNovel":
+                    await GenerateNovelAsync(
+                        scope.ServiceProvider,
+                        db,
+                        job,
+                        payload.RootElement,
+                        cancellationToken);
+                    break;
+
                 default:
                     throw new InvalidOperationException($"未知任务类型：{message.Type}");
             }
@@ -508,6 +517,158 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         var cjk = text.Count(ch => ch >= 0x2E80);
         var other = Math.Max(0, text.Length - cjk);
         return cjk + (int)Math.Ceiling(other / 4d);
+    }
+
+    /// <summary>
+    /// 长篇 AI 创作任务。先生成全局创作蓝图，再按章节逐章生成并实时落库。
+    /// 章节和目标字数不设置业务上限；每完成一章即推进 checkpoint/progress，
+    /// 失败重试时从最后完成章节继续，不重复生成已完成内容。
+    /// </summary>
+    private static async Task GenerateNovelAsync(
+        IServiceProvider services,
+        AppDbContext db,
+        JobRecord job,
+        JsonElement payload,
+        CancellationToken cancellationToken)
+    {
+        var ai = services.GetRequiredService<IAiChatClient>();
+
+        var generatedNovelId = payload.GetProperty("generatedNovelId").GetInt64();
+        var generated = await db.GeneratedNovels.FindAsync([generatedNovelId], cancellationToken)
+                        ?? throw new InvalidOperationException("AI 创作记录不存在。");
+
+        var styleId = payload.TryGetProperty("StyleId", out var styleIdProperty) &&
+                      styleIdProperty.ValueKind == JsonValueKind.Number
+            ? styleIdProperty.GetInt64()
+            : generated.StyleId;
+
+        var style = styleId.HasValue
+            ? await db.WritingStyles.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == styleId.Value, cancellationToken)
+            : null;
+
+        var title = payload.TryGetProperty("Title", out var titleProperty)
+            ? titleProperty.GetString() ?? generated.Title
+            : generated.Title;
+        var prompt = payload.TryGetProperty("Prompt", out var promptProperty)
+            ? promptProperty.GetString() ?? generated.Prompt
+            : generated.Prompt;
+        var genre = payload.TryGetProperty("Genre", out var genreProperty)
+            ? genreProperty.GetString()
+            : generated.Genre;
+        var pointOfView = payload.TryGetProperty("PointOfView", out var povProperty)
+            ? povProperty.GetString()
+            : generated.PointOfView;
+        var tone = payload.TryGetProperty("Tone", out var toneProperty)
+            ? toneProperty.GetString()
+            : generated.Tone;
+
+        var targetWords = payload.TryGetProperty("TargetWords", out var targetWordsProperty)
+            ? targetWordsProperty.GetInt32()
+            : generated.TargetWords;
+        var chapterCount = payload.TryGetProperty("ChapterCount", out var chapterCountProperty)
+            ? chapterCountProperty.GetInt32()
+            : generated.ChapterCount;
+
+        if (targetWords <= 0 || chapterCount <= 0)
+            throw new InvalidOperationException("目标字数和章节数必须大于 0。");
+
+        job.TotalSteps = chapterCount + 1;
+        var constraints = $"""
+            小说标题：{title}
+            题材：{genre ?? "不限"}
+            总目标字数：约 {targetWords:N0} 字
+            总章节数：{chapterCount:N0}
+            叙事视角：{pointOfView ?? "自动选择"}
+            整体基调：{tone ?? "按故事需要"}
+            用户创作要求：{prompt}
+            """;
+
+        // checkpoint=0 表示大纲尚未完成；>=1 表示大纲已完成。
+        if (job.Checkpoint <= 0 || string.IsNullOrWhiteSpace(generated.Outline))
+        {
+            await EnsureNotStoppingAsync(db, job, cancellationToken);
+
+            generated.Outline = await ai.ChatTrackedAsync(
+                "你是中文长篇小说总编剧。制定可长期维持人物一致性、冲突升级和伏笔回收的原创创作蓝图。",
+                (style?.PromptTemplate ?? string.Empty) +
+                """
+                
+                请先制定全书创作蓝图。不要直接写正文。
+                当章节很多时不要逐章展开到很长，而是用“故事阶段/篇章弧 + 关键章节节点”的方式规划，
+                明确主角目标、主要人物关系、核心冲突、阶段升级、关键伏笔、转折点、高潮与结局方向。
+                蓝图必须能指导后续逐章生成并保持前后连续。
+                
+                """ + constraints,
+                new AiCallContext(generated.SourceNovelId, job.Id, "GenerateNovelOutline"),
+                cancellationToken);
+
+            job.Checkpoint = 1;
+            job.Progress = (int)Math.Round(100d / job.TotalSteps);
+            JobTimingCalculator.Refresh(job);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        var completedChapters = Math.Max(0, job.Checkpoint - 1);
+        var wordsPerChapter = Math.Max(1L, (long)Math.Ceiling(targetWords / (double)chapterCount));
+
+        for (var chapterIndex = completedChapters; chapterIndex < chapterCount; chapterIndex++)
+        {
+            await EnsureNotStoppingAsync(db, job, cancellationToken);
+
+            var chapterNumber = chapterIndex + 1;
+            var previousTail = string.IsNullOrWhiteSpace(generated.Content)
+                ? "这是第一章，无前文。"
+                : generated.Content.Length <= 5000
+                    ? generated.Content
+                    : generated.Content[^5000..];
+
+            var chapter = await ai.ChatTrackedAsync(
+                "你是专业中文长篇小说作者。只输出当前章节正文，不解释写作过程，不提前生成后续章节。",
+                (style?.PromptTemplate ?? string.Empty) +
+                $"""
+                
+                {constraints}
+                
+                全书创作蓝图：
+                {generated.Outline}
+                
+                当前任务：
+                生成第 {chapterNumber:N0} / {chapterCount:N0} 章。
+                本章目标长度约 {wordsPerChapter:N0} 字；这是目标值而不是硬截断点，应优先保证章节完整性。
+                必须承接已有正文，人物姓名、性格、能力、关系、时间线和已发生事件保持一致。
+                本章末尾应自然形成推进下一章的动力，但不要输出下一章内容。
+                
+                最近正文上下文：
+                {previousTail}
+                """,
+                new AiCallContext(
+                    generated.SourceNovelId,
+                    job.Id,
+                    "GenerateNovelChapter",
+                    chapterNumber,
+                    chapterCount),
+                cancellationToken);
+
+            if (!string.IsNullOrWhiteSpace(generated.Content))
+                generated.Content += Environment.NewLine + Environment.NewLine;
+
+            generated.Content += $"第{chapterNumber}章" + Environment.NewLine + chapter.Trim();
+
+            job.Checkpoint = chapterNumber + 1;
+            job.Progress = (int)Math.Round(job.Checkpoint * 100d / job.TotalSteps);
+            job.Result = $"generated:{generated.Id}";
+            JobTimingCalculator.Refresh(job);
+
+            // 每章完成立即落库：前端可实时看到进度，失败/停止后也保留已完成正文。
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        job.Progress = 100;
+        job.Checkpoint = job.TotalSteps;
+        job.Result = $"generated:{generated.Id}";
+        JobTimingCalculator.Refresh(job);
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     private static async Task EnsureNotStoppingAsync(

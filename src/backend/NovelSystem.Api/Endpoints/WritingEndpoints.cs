@@ -120,55 +120,70 @@ public static class WritingEndpoints
             return Results.Ok();
         });
 
-        group.MapPost("/generate", async (GenerateNovelRequest request, AppDbContext db, IAiChatClient ai) =>
+        group.MapPost("/generate", async (
+            GenerateNovelRequest request,
+            AppDbContext db,
+            JobQueue queue) =>
         {
-            var style = request.StyleId is null ? null : await db.WritingStyles.FindAsync(request.StyleId);
-            var targetWords = Math.Clamp(request.TargetWords, 1000, 50000);
-            var chapterCount = Math.Clamp(request.ChapterCount, 1, 30);
+            if (string.IsNullOrWhiteSpace(request.Title))
+                return Results.BadRequest(new { message = "小说标题不能为空。" });
+            if (request.TargetWords <= 0)
+                return Results.BadRequest(new { message = "目标字数必须大于 0。" });
+            if (request.ChapterCount <= 0)
+                return Results.BadRequest(new { message = "章节数必须大于 0。" });
 
-            var constraints = $"""
-                标题：{request.Title}
-                题材：{request.Genre ?? "不限"}
-                目标字数：约 {targetWords} 字
-                章节数：{chapterCount}
-                叙事视角：{request.PointOfView ?? "自动选择"}
-                整体基调：{request.Tone ?? "按故事需要"}
-                用户创作指令：{request.Prompt}
-                """;
-
-            var outline = await ai.ChatTrackedAsync(
-                "你是中文长篇小说策划编辑。只做原创故事规划，不复刻来源小说剧情和人物。",
-                (style?.PromptTemplate ?? string.Empty) +
-                "\n\n请先生成详细创作规划：核心卖点、世界观、主要人物、核心冲突、章节结构、伏笔与情绪曲线。\n" +
-                constraints,
-                new AiCallContext(request.SourceNovelId, null, "GenerateNovelOutline"));
-
-            var content = await ai.ChatTrackedAsync(
-                "你是专业中文小说作者。严格依据给定原创大纲和写作风格完成正文，保持人物一致、情节连续，禁止解释创作过程。",
-                (style?.PromptTemplate ?? string.Empty) +
-                "\n\n创作约束：\n" + constraints +
-                "\n\n已批准大纲：\n" + outline +
-                "\n\n请输出完整正文，按章节排版。",
-                new AiCallContext(request.SourceNovelId, null, "GenerateNovel"));
-
-            var novel = new GeneratedNovel
+            // 不对目标字数、章节数设置业务上限。
+            // 真正的长篇生成由后台任务按章节拆分执行，避免一次请求被模型 max_tokens 截断。
+            var generated = new GeneratedNovel
             {
-                Title = request.Title,
+                Title = request.Title.Trim(),
                 StyleId = request.StyleId,
                 SourceNovelId = request.SourceNovelId,
                 Prompt = request.Prompt,
                 Genre = request.Genre,
-                TargetWords = targetWords,
-                ChapterCount = chapterCount,
+                TargetWords = request.TargetWords,
+                ChapterCount = request.ChapterCount,
                 PointOfView = request.PointOfView,
                 Tone = request.Tone,
-                Outline = outline,
-                Content = content
+                Content = string.Empty
             };
 
-            db.GeneratedNovels.Add(novel);
+            db.GeneratedNovels.Add(generated);
             await db.SaveChangesAsync();
-            return Results.Ok(novel);
+
+            var payload = JsonSerializer.Serialize(new
+            {
+                generatedNovelId = generated.Id,
+                request.Title,
+                request.StyleId,
+                request.SourceNovelId,
+                request.Prompt,
+                request.Genre,
+                request.TargetWords,
+                request.ChapterCount,
+                request.PointOfView,
+                request.Tone
+            });
+
+            var job = new JobRecord
+            {
+                Type = "GenerateNovel",
+                Payload = payload,
+                TotalSteps = request.ChapterCount + 1
+            };
+            db.Jobs.Add(job);
+            await db.SaveChangesAsync();
+
+            queue.Enqueue(new JobMessage(job.Id, job.Type, payload));
+
+            return Results.Ok(new
+            {
+                jobId = job.Id,
+                generatedNovelId = generated.Id,
+                status = job.Status,
+                progress = job.Progress,
+                totalSteps = job.TotalSteps
+            });
         });
 
         group.MapGet("/generated", async (
