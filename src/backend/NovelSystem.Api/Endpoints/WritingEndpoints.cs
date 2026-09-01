@@ -213,6 +213,50 @@ public static class WritingEndpoints
             return Results.Ok(new { items, total, page, pageSize });
         });
 
+        group.MapGet("/generated/{id:long}", async (long id, AppDbContext db) =>
+        {
+            var novel = await db.GeneratedNovels.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == id);
+
+            if (novel is null)
+                return Results.NotFound();
+
+            var job = await db.Jobs.AsNoTracking()
+                .Where(x => x.Type == "GenerateNovel" &&
+                            x.Payload != null &&
+                            x.Payload.Contains($"\"generatedNovelId\":{id}"))
+                .OrderByDescending(x => x.Id)
+                .FirstOrDefaultAsync();
+
+            return Results.Ok(new
+            {
+                novel.Id,
+                novel.Title,
+                novel.StyleId,
+                novel.SourceNovelId,
+                novel.Prompt,
+                novel.Genre,
+                novel.TargetWords,
+                novel.ChapterCount,
+                novel.PointOfView,
+                novel.Tone,
+                novel.Outline,
+                novel.Content,
+                createdAt = JobTimingCalculator.ToUtcIso(novel.CreatedAt),
+                job = job is null ? null : new
+                {
+                    job.Id,
+                    job.Status,
+                    job.Progress,
+                    job.Checkpoint,
+                    job.TotalSteps,
+                    job.Error,
+                    job.ElapsedMilliseconds,
+                    estimatedCompletionAt = JobTimingCalculator.ToUtcIso(job.EstimatedCompletionAt)
+                }
+            });
+        });
+
         group.MapGet("/generated/{id:long}/download", async (long id, AppDbContext db) =>
         {
             var novel = await db.GeneratedNovels.FindAsync(id);

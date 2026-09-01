@@ -229,6 +229,7 @@ onUnmounted(()=>{if(pollTimer)window.clearTimeout(pollTimer);});
         <small>{{item.genre||'未分类'}} · {{Number(item.chapterCount||1).toLocaleString()}} 章 · 目标 {{Number(item.targetWords||0).toLocaleString()}} 字</small>
         <p>{{item.content?item.content.slice(0,180)+'...':'生成中，正文将在每章完成后持续写入。'}}</p>
         <div>
+          <el-button text type="primary" @click="router.push('/writing/generated/'+item.id)">查看小说</el-button>
           <el-link :href="writingApi.downloadUrl(item.id)" type="primary" :disabled="!item.content">下载 TXT</el-link>
           <el-button text :disabled="!item.content" @click="publish(item)">进入小说工作台</el-button>
         </div>
