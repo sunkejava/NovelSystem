@@ -567,9 +567,9 @@ public sealed class NovelAnalysisService(AppDbContext db, IAiChatClient aiClient
                 // 如果后面仍是普通正文字符，则这个双引号大概率属于小说对白，模型漏写了反斜杠。
                 if (!LooksLikeStringTerminator(json, i + 1))
                 {
-                    builder.Append("\\"");
+                    builder.Append("\\\"");
                     changed = true;
-                    repairs.Add($"index={i}: 字符串内部未转义双引号 -> \\\"");
+                    repairs.Add($"index={i}: 字符串内部未转义双引号 -> 已补反斜杠转义");
                     continue;
                 }
 
