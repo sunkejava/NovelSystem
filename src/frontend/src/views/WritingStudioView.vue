@@ -120,9 +120,10 @@ onUnmounted(()=>{if(pollTimer)window.clearTimeout(pollTimer);});
 </script>
 
 <template>
-<div class="writing-studio-page">
+<div class="writing-studio-page page-fill">
   <PageHeader eyebrow="GENERATIVE STUDIO" title="AI 创作舱" description="长篇小说采用大纲 + 逐章后台生成，可实时查看真实生成进度。"/>
 
+  <div class="writing-studio-top">
   <div class="writing-layout writing-layout-wide">
     <section class="glass-panel content-card generator-panel">
       <div class="section-title">
@@ -210,8 +211,9 @@ onUnmounted(()=>{if(pollTimer)window.clearTimeout(pollTimer);});
       <EmptyState v-else title="尚未训练写作风格" description="可直接创作，或先在小说资产库学习写法。"/>
     </section>
   </div>
+  </div>
 
-  <section class="glass-panel content-card generated-panel">
+  <section class="glass-panel content-card generated-panel writing-generated-panel">
     <div class="card-head">
       <div><span class="eyebrow">GENERATED STORIES</span><h3>生成作品</h3></div>
       <span>{{total}} STORIES</span>
@@ -222,20 +224,22 @@ onUnmounted(()=>{if(pollTimer)window.clearTimeout(pollTimer);});
       </el-input>
       <el-button class="neon-button" @click="search">查询</el-button>
     </div>
-    <div v-if="generated.length" class="generated-grid">
+    <div class="generated-results-region">
+    <div v-if="generated.length" class="generated-grid writing-generated-grid">
       <article v-for="item in generated" :key="item.id" class="generated-card">
         <span class="generated-id">GEN-{{item.id}}</span>
         <h3>{{item.title}}</h3>
         <small>{{item.genre||'未分类'}} · {{Number(item.chapterCount||1).toLocaleString()}} 章 · 目标 {{Number(item.targetWords||0).toLocaleString()}} 字</small>
         <p>{{item.content?item.content.slice(0,180)+'...':'生成中，正文将在每章完成后持续写入。'}}</p>
-        <div>
-          <el-button text type="primary" @click="router.push('/writing/generated/'+item.id)">查看小说</el-button>
+        <div class="generated-card-actions">
+          <el-button class="neon-button generated-view-button" @click="router.push('/writing/generated/'+item.id)">查看小说</el-button>
           <el-link :href="writingApi.downloadUrl(item.id)" type="primary" :disabled="!item.content">下载 TXT</el-link>
-          <el-button text :disabled="!item.content" @click="publish(item)">进入小说工作台</el-button>
+          <el-button class="ghost-button" :disabled="!item.content" @click="publish(item)">进入小说工作台</el-button>
         </div>
       </article>
     </div>
     <EmptyState v-else title="没有匹配的生成作品" description="调整查询条件或创建新的小说。"/>
+    </div>
     <ListPager v-model:page="query.page" v-model:page-size="query.pageSize" :total="total" @change="loadGenerated"/>
   </section>
 </div>
