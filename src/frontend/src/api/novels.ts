@@ -2,6 +2,7 @@ import {http} from './http';
 export const novelApi={
   list:(params:any={})=>http.get('/novels/',{params}).then(r=>r.data),
   detail:(id:number|string)=>http.get('/novels/'+id).then(r=>r.data),
+  characters:(id:number|string,params:any={})=>http.get('/novels/'+id+'/characters',{params}).then(r=>r.data),
   scripts:(id:number|string,params:any={})=>http.get('/novels/'+id+'/scripts',{params}).then(r=>r.data),
   upload:(file:File)=>{const form=new FormData();form.append('file',file);return http.post('/novels/upload',form).then(r=>r.data);},
   update:(id:number,payload:{title:string;content:string})=>http.put('/novels/'+id,payload).then(r=>r.data),

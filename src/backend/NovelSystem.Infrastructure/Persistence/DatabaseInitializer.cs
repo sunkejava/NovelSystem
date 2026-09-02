@@ -105,6 +105,11 @@ public static class DatabaseInitializer
             await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "AverageStepMilliseconds" INTEGER NOT NULL DEFAULT 0;""", cancellationToken);
         if (!columns.Contains("EstimatedCompletionAt", StringComparer.OrdinalIgnoreCase))
             await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "EstimatedCompletionAt" TEXT NULL;""", cancellationToken);
+        if (!columns.Contains("QueuedAt", StringComparer.OrdinalIgnoreCase))
+        {
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "QueuedAt" TEXT NULL;""", cancellationToken);
+            await db.Database.ExecuteSqlRawAsync("""UPDATE "Jobs" SET "QueuedAt" = "CreatedAt" WHERE "QueuedAt" IS NULL;""", cancellationToken);
+        }
     }
 
 

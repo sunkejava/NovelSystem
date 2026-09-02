@@ -43,6 +43,16 @@ public static class JobEndpoints
                 .Take(pageSize)
                 .ToListAsync();
 
+            var queuedOrder = await db.Jobs.AsNoTracking()
+                .Where(x => x.Status == "Queued")
+                .OrderBy(x => x.QueuedAt)
+                .ThenBy(x => x.Id)
+                .Select(x => x.Id)
+                .ToListAsync();
+            var queuePositions = queuedOrder
+                .Select((jobId, index) => new { jobId, position = index + 1 })
+                .ToDictionary(x => x.jobId, x => x.position);
+
             var items = rawItems.Select(x => new
             {
                 x.Id,
@@ -55,6 +65,8 @@ public static class JobEndpoints
                 x.Payload,
                 x.Result,
                 x.Error,
+                queuePosition = queuePositions.TryGetValue(x.Id, out var queuePosition) ? queuePosition : (int?)null,
+                queuedAt = JobTimingCalculator.ToUtcIso(x.QueuedAt),
                 createdAt = JobTimingCalculator.ToUtcIso(x.CreatedAt),
                 startedAt = JobTimingCalculator.ToUtcIso(x.StartedAt),
                 finishedAt = JobTimingCalculator.ToUtcIso(x.FinishedAt),
@@ -65,7 +77,8 @@ public static class JobEndpoints
 
             var summary = new
             {
-                running = await db.Jobs.CountAsync(x => x.Status == "Running" || x.Status == "Queued" || x.Status == "Stopping"),
+                running = await db.Jobs.CountAsync(x => x.Status == "Running" || x.Status == "Stopping"),
+                queued = await db.Jobs.CountAsync(x => x.Status == "Queued"),
                 completed = await db.Jobs.CountAsync(x => x.Status == "Completed"),
                 failed = await db.Jobs.CountAsync(x => x.Status == "Failed")
             };
@@ -78,6 +91,11 @@ public static class JobEndpoints
             var x = await db.Jobs.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
             if (x is null) return Results.NotFound();
 
+            var queuePosition = x.Status == "Queued"
+                ? await db.Jobs.CountAsync(j => j.Status == "Queued" &&
+                    (j.QueuedAt < x.QueuedAt || (j.QueuedAt == x.QueuedAt && j.Id <= x.Id)))
+                : 0;
+
             return Results.Ok(new
             {
                 x.Id,
@@ -89,6 +107,8 @@ public static class JobEndpoints
                 x.RetryCount,
                 x.Result,
                 x.Error,
+                queuePosition = x.Status == "Queued" ? queuePosition : (int?)null,
+                queuedAt = JobTimingCalculator.ToUtcIso(x.QueuedAt),
                 createdAt = JobTimingCalculator.ToUtcIso(x.CreatedAt),
                 startedAt = JobTimingCalculator.ToUtcIso(x.StartedAt),
                 finishedAt = JobTimingCalculator.ToUtcIso(x.FinishedAt),
@@ -172,6 +192,7 @@ public static class JobEndpoints
             return Results.BadRequest(new { message = "任务参数为空，无法继续。" });
 
         job.Status = "Queued";
+        job.QueuedAt = DateTime.UtcNow;
         job.Error = null;
         job.FinishedAt = null;
         job.EstimatedCompletionAt = null;

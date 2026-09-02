@@ -32,6 +32,8 @@ public sealed class JobWorker(IServiceScopeFactory scopeFactory, JobQueue queue)
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var pending = await db.Jobs
             .Where(x => x.Status == "Queued" || x.Status == "Running" || x.Status == "Stopping")
+            .OrderBy(x => x.QueuedAt)
+            .ThenBy(x => x.Id)
             .ToListAsync(cancellationToken);
 
         foreach (var job in pending.Where(x => !string.IsNullOrWhiteSpace(x.Payload)))

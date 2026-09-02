@@ -22,6 +22,9 @@ public sealed class JobRecord : Entity
     /// <summary>任务创建时间（UTC）。</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>最近一次进入等待队列的时间（UTC），用于持久化 FIFO 排队顺序。</summary>
+    public DateTime QueuedAt { get; set; } = DateTime.UtcNow;
+
     /// <summary>任务第一次真正开始执行的时间（UTC）。</summary>
     public DateTime? StartedAt { get; set; }
 

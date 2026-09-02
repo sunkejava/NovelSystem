@@ -76,15 +76,66 @@ public static class NovelEndpoints
 
         group.MapGet("/{id:long}", async (long id, AppDbContext db) =>
         {
-            var novel = await db.Novels.FindAsync(id);
+            // 工作台首屏只返回轻量元数据，绝不传输完整小说 Content 和全部角色。
+            // 大型小说正文可能达到数 MB，首屏返回会显著拖慢序列化、网络传输和 Vue 响应式初始化。
+            var novel = await db.Novels.AsNoTracking()
+                .Where(x => x.Id == id)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.Title,
+                    x.SourceFile,
+                    x.Status,
+                    x.NarratorVoiceProfileId,
+                    x.CreatedAt,
+                    contentLength = x.Content.Length
+                })
+                .FirstOrDefaultAsync();
+
             if (novel is null) return Results.NotFound();
+
+            var characterCount = await db.Characters.AsNoTracking().CountAsync(x => x.NovelId == id);
+            var scriptCount = await db.ScriptLines.AsNoTracking().CountAsync(x => x.NovelId == id);
+            var audioCompleted = await db.ScriptLines.AsNoTracking()
+                .CountAsync(x => x.NovelId == id && x.Status == "Completed" && x.AudioFile != null);
 
             return Results.Ok(new
             {
                 novel,
-                characters = await db.Characters.Where(x => x.NovelId == id).OrderBy(x => x.Id).ToListAsync(),
-                scriptCount = await db.ScriptLines.CountAsync(x => x.NovelId == id)
+                characterCount,
+                scriptCount,
+                audioCompleted
             });
+        });
+
+        group.MapGet("/{id:long}/characters", async (
+            long id,
+            AppDbContext db,
+            int page = 1,
+            int pageSize = 24,
+            string? keyword = null) =>
+        {
+            NormalizePaging(ref page, ref pageSize);
+            var query = db.Characters.AsNoTracking().Where(x => x.NovelId == id);
+
+            if (!string.IsNullOrWhiteSpace(keyword))
+            {
+                var value = keyword.Trim();
+                query = query.Where(x =>
+                    x.Name.Contains(value) ||
+                    (x.Gender != null && x.Gender.Contains(value)) ||
+                    (x.Personality != null && x.Personality.Contains(value)) ||
+                    (x.Description != null && x.Description.Contains(value)));
+            }
+
+            var total = await query.CountAsync();
+            var items = await query
+                .OrderBy(x => x.Id)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return Results.Ok(new { items, total, page, pageSize });
         });
 
         group.MapGet("/{id:long}/scripts", async (
