@@ -19,7 +19,6 @@ public static class DependencyInjection
     {
         services.AddDbContext<AppDbContext>(options => options.UseSqlite(connectionString));
 
-        // llama.cpp 长任务频繁分块请求时复用同一连接池，避免每个分块重复建立 TCP 连接。
         services.AddHttpClient("llama.cpp")
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
             {
@@ -31,7 +30,8 @@ public static class DependencyInjection
 
         services.AddHttpClient();
         services.AddScoped<IAiChatClient, LlamaCppChatClient>();
-        services.AddScoped<ITtsClient, Qwen3TtsClient>();
+        services.AddScoped<Qwen3TtsClient>();
+        services.AddScoped<ITtsClient, PronunciationTtsClient>();
         services.AddScoped<INovelAnalysisService, NovelAnalysisService>();
         services.AddSingleton<JobQueue>();
         services.AddHostedService<JobWorker>();
