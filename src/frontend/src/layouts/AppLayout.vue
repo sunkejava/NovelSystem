@@ -10,6 +10,7 @@ const {mode,accent,toggle,setAccent}=useTheme();
 const menus=[
   {path:'/dashboard',label:'智能总览',icon:DataAnalysis},
   {path:'/novels',label:'小说资产',icon:Document},
+  {path:'/production',label:'专业制作',icon:Operation},
   {path:'/jobs',label:'任务中枢',icon:Operation},
   {path:'/styles',label:'写作风格',icon:MagicStick},
   {path:'/writing',label:'AI 创作舱',icon:MagicStick},
