@@ -195,7 +195,7 @@ public static class ProductionEndpoints
             line.Status = "Completed";
             await db.SaveChangesAsync(ct);
             await AudioTimelineService.RecalculateNovelTimelineAsync(db, line.NovelId, ct);
-            return Results.Ok(new { line.Id, version.Id, version.VersionNo, line.AudioStartMs, line.AudioEndMs });
+            return Results.Ok(new { scriptLineId = line.Id, versionId = version.Id, version.VersionNo, line.AudioStartMs, line.AudioEndMs });
         });
 
         group.MapDelete("/timeline/versions/{versionId:long}", async (long versionId, AppDbContext db, CancellationToken ct) =>
@@ -225,16 +225,7 @@ public static class ProductionEndpoints
         {
             if (string.IsNullOrWhiteSpace(request.Pattern) || string.IsNullOrWhiteSpace(request.Replacement))
                 return Results.BadRequest(new { message = "原词和发音替换不能为空。" });
-            var entity = new PronunciationEntry
-            {
-                NovelId = novelId,
-                Pattern = request.Pattern.Trim(),
-                Replacement = request.Replacement.Trim(),
-                Note = request.Note?.Trim(),
-                IsEnabled = request.IsEnabled,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
+            var entity = new PronunciationEntry { NovelId = novelId, Pattern = request.Pattern.Trim(), Replacement = request.Replacement.Trim(), Note = request.Note?.Trim(), IsEnabled = request.IsEnabled, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
             db.PronunciationEntries.Add(entity);
             await db.SaveChangesAsync(ct);
             return Results.Ok(entity);
@@ -244,11 +235,7 @@ public static class ProductionEndpoints
         {
             var entity = await db.PronunciationEntries.FindAsync([id], ct);
             if (entity is null) return Results.NotFound();
-            entity.Pattern = request.Pattern.Trim();
-            entity.Replacement = request.Replacement.Trim();
-            entity.Note = request.Note?.Trim();
-            entity.IsEnabled = request.IsEnabled;
-            entity.UpdatedAt = DateTime.UtcNow;
+            entity.Pattern = request.Pattern.Trim(); entity.Replacement = request.Replacement.Trim(); entity.Note = request.Note?.Trim(); entity.IsEnabled = request.IsEnabled; entity.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
             return Results.Ok(entity);
         });
@@ -298,11 +285,7 @@ public static class ProductionEndpoints
                 normalizedOrder = true;
             }
 
-            var audioIds = issues
-                .Where(x => x.ScriptLineId.HasValue && (x.Type == "AudioFailed" || x.Type == "AudioFileMissing"))
-                .Select(x => x.ScriptLineId!.Value)
-                .Distinct()
-                .ToList();
+            var audioIds = issues.Where(x => x.ScriptLineId.HasValue && (x.Type == "AudioFailed" || x.Type == "AudioFileMissing")).Select(x => x.ScriptLineId!.Value).Distinct().ToList();
             foreach (var scriptId in audioIds)
             {
                 var payload = JsonSerializer.Serialize(new { novelId, scriptLineId = scriptId });
@@ -334,14 +317,10 @@ public static class ProductionEndpoints
         var novel = await db.Novels.AsNoTracking().FirstAsync(x => x.Id == novelId, ct);
         var previous = await db.NovelQaIssues.Where(x => x.NovelId == novelId && !x.Resolved).ToListAsync(ct);
         db.NovelQaIssues.RemoveRange(previous);
-
         var issues = new List<NovelQaIssue>();
         var scripts = await db.ScriptLines.AsNoTracking().Where(x => x.NovelId == novelId).OrderBy(x => x.Order).ToListAsync(ct);
         var characterVoices = await db.Characters.AsNoTracking().Where(x => x.NovelId == novelId).ToDictionaryAsync(x => x.Id, x => x.VoiceProfileId, ct);
-
-        if (scripts.Any(x => string.Equals(x.Speaker, "旁白", StringComparison.OrdinalIgnoreCase)) && !novel.NarratorVoiceProfileId.HasValue)
-            issues.Add(NewIssue(novelId, null, "NarratorVoiceMissing", "Error", "小说包含旁白脚本，但尚未绑定旁白音色。"));
-
+        if (scripts.Any(x => string.Equals(x.Speaker, "旁白", StringComparison.OrdinalIgnoreCase)) && !novel.NarratorVoiceProfileId.HasValue) issues.Add(NewIssue(novelId, null, "NarratorVoiceMissing", "Error", "小说包含旁白脚本，但尚未绑定旁白音色。"));
         for (var i = 0; i < scripts.Count; i++)
         {
             var line = scripts[i];
@@ -355,7 +334,6 @@ public static class ProductionEndpoints
             if (i > 0 && string.Equals(scripts[i - 1].Text.Trim(), line.Text.Trim(), StringComparison.Ordinal)) issues.Add(NewIssue(novelId, line.Id, "DuplicateAdjacentText", "Warning", $"脚本 #{line.Order} 与上一条文本完全重复。"));
             if (i > 0 && line.Order != scripts[i - 1].Order + 1) issues.Add(NewIssue(novelId, line.Id, "OrderGap", "Warning", $"脚本顺序存在跳号：{scripts[i - 1].Order} → {line.Order}。"));
         }
-
         db.NovelQaIssues.AddRange(issues);
         await db.SaveChangesAsync(ct);
         return new { total = issues.Count, errors = issues.Count(x => x.Severity == "Error"), warnings = issues.Count(x => x.Severity == "Warning") };
