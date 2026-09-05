@@ -19,6 +19,7 @@ public static class DatabaseInitializer
         await EnsureVoiceSemanticSchemaAsync(db, cancellationToken);
         await EnsureAiAnalysisErrorSchemaAsync(db, cancellationToken);
         await EnsureGeneratedNovelSchemaAsync(db, cancellationToken);
+        await EnsureProductionSchemaAsync(db, cancellationToken);
 
         var defaults = new Dictionary<string, string>
         {
@@ -79,20 +80,16 @@ public static class DatabaseInitializer
             await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Characters" ADD COLUMN "VoiceProfileId" INTEGER NULL;""", cancellationToken);
     }
 
-
     private static async Task EnsureNovelNarratorVoiceSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
     {
         var columns = await GetColumnsAsync(db, "Novels", cancellationToken);
         if (!columns.Contains("NarratorVoiceProfileId", StringComparer.OrdinalIgnoreCase))
-            await db.Database.ExecuteSqlRawAsync(
-                """ALTER TABLE "Novels" ADD COLUMN "NarratorVoiceProfileId" INTEGER NULL;""",
-                cancellationToken);
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Novels" ADD COLUMN "NarratorVoiceProfileId" INTEGER NULL;""", cancellationToken);
     }
 
     private static async Task EnsureJobCheckpointSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
     {
         var columns = await GetColumnsAsync(db, "Jobs", cancellationToken);
-
         if (!columns.Contains("Checkpoint", StringComparer.OrdinalIgnoreCase))
             await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" ADD COLUMN "Checkpoint" INTEGER NOT NULL DEFAULT 0;""", cancellationToken);
         if (!columns.Contains("TotalSteps", StringComparer.OrdinalIgnoreCase))
@@ -111,7 +108,6 @@ public static class DatabaseInitializer
             await db.Database.ExecuteSqlRawAsync("""UPDATE "Jobs" SET "QueuedAt" = "CreatedAt" WHERE "QueuedAt" IS NULL;""", cancellationToken);
         }
     }
-
 
     private static async Task EnsureAiTokenUsageSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
     {
@@ -144,14 +140,11 @@ public static class DatabaseInitializer
             """, cancellationToken);
     }
 
-
     private static async Task EnsureAiTokenUsageEstimatedSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
     {
         var columns = await GetColumnsAsync(db, "AiTokenUsages", cancellationToken);
         if (!columns.Contains("IsEstimated", StringComparer.OrdinalIgnoreCase))
-            await db.Database.ExecuteSqlRawAsync(
-                """ALTER TABLE "AiTokenUsages" ADD COLUMN "IsEstimated" INTEGER NOT NULL DEFAULT 0;""",
-                cancellationToken);
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "AiTokenUsages" ADD COLUMN "IsEstimated" INTEGER NOT NULL DEFAULT 0;""", cancellationToken);
     }
 
     private static async Task EnsureVoiceSemanticSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
@@ -180,10 +173,8 @@ public static class DatabaseInitializer
                 "Recovered" INTEGER NOT NULL,
                 "CreatedAt" TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS "IX_AiAnalysisErrors_NovelId_JobId_ChunkIndex"
-                ON "AiAnalysisErrors" ("NovelId","JobId","ChunkIndex");
-            CREATE INDEX IF NOT EXISTS "IX_AiAnalysisErrors_CreatedAt"
-                ON "AiAnalysisErrors" ("CreatedAt");
+            CREATE INDEX IF NOT EXISTS "IX_AiAnalysisErrors_NovelId_JobId_ChunkIndex" ON "AiAnalysisErrors" ("NovelId","JobId","ChunkIndex");
+            CREATE INDEX IF NOT EXISTS "IX_AiAnalysisErrors_CreatedAt" ON "AiAnalysisErrors" ("CreatedAt");
             """, cancellationToken);
     }
 
@@ -201,19 +192,73 @@ public static class DatabaseInitializer
             await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 
+    /// <summary>第一阶段专业制作能力：章节、原文偏移、发音词典、质量检测。</summary>
+    private static async Task EnsureProductionSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "NovelChapters" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_NovelChapters" PRIMARY KEY AUTOINCREMENT,
+                "NovelId" INTEGER NOT NULL,
+                "VolumeTitle" TEXT NULL,
+                "VolumeOrder" INTEGER NOT NULL DEFAULT 0,
+                "ChapterOrder" INTEGER NOT NULL,
+                "Title" TEXT NOT NULL,
+                "SourceStart" INTEGER NOT NULL,
+                "SourceEnd" INTEGER NOT NULL,
+                "CreatedAt" TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_NovelChapters_NovelId_ChapterOrder" ON "NovelChapters" ("NovelId","ChapterOrder");
+
+            CREATE TABLE IF NOT EXISTS "PronunciationEntries" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_PronunciationEntries" PRIMARY KEY AUTOINCREMENT,
+                "NovelId" INTEGER NOT NULL,
+                "Pattern" TEXT NOT NULL,
+                "Replacement" TEXT NOT NULL,
+                "Note" TEXT NULL,
+                "IsEnabled" INTEGER NOT NULL DEFAULT 1,
+                "CreatedAt" TEXT NOT NULL,
+                "UpdatedAt" TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_PronunciationEntries_NovelId_Pattern" ON "PronunciationEntries" ("NovelId","Pattern");
+
+            CREATE TABLE IF NOT EXISTS "NovelQaIssues" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_NovelQaIssues" PRIMARY KEY AUTOINCREMENT,
+                "NovelId" INTEGER NOT NULL,
+                "ScriptLineId" INTEGER NULL,
+                "Type" TEXT NOT NULL,
+                "Severity" TEXT NOT NULL,
+                "Message" TEXT NOT NULL,
+                "Resolved" INTEGER NOT NULL DEFAULT 0,
+                "CreatedAt" TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_NovelQaIssues_NovelId_Resolved_Severity" ON "NovelQaIssues" ("NovelId","Resolved","Severity");
+            """, cancellationToken);
+
+        var scriptColumns = await GetColumnsAsync(db, "ScriptLines", cancellationToken);
+        if (!scriptColumns.Contains("ChapterId", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "ScriptLines" ADD COLUMN "ChapterId" INTEGER NULL;""", cancellationToken);
+        if (!scriptColumns.Contains("SourceStart", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "ScriptLines" ADD COLUMN "SourceStart" INTEGER NOT NULL DEFAULT -1;""", cancellationToken);
+        if (!scriptColumns.Contains("SourceEnd", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "ScriptLines" ADD COLUMN "SourceEnd" INTEGER NOT NULL DEFAULT -1;""", cancellationToken);
+        if (!scriptColumns.Contains("AudioStartMs", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "ScriptLines" ADD COLUMN "AudioStartMs" INTEGER NULL;""", cancellationToken);
+        if (!scriptColumns.Contains("AudioEndMs", StringComparer.OrdinalIgnoreCase))
+            await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "ScriptLines" ADD COLUMN "AudioEndMs" INTEGER NULL;""", cancellationToken);
+
+        await db.Database.ExecuteSqlRawAsync("""CREATE INDEX IF NOT EXISTS "IX_ScriptLines_NovelId_SourceStart" ON "ScriptLines" ("NovelId","SourceStart");""", cancellationToken);
+    }
+
     private static async Task<List<string>> GetColumnsAsync(AppDbContext db, string tableName, CancellationToken cancellationToken)
     {
         var columns = new List<string>();
         await using var command = db.Database.GetDbConnection().CreateCommand();
-
         if (command.Connection!.State != System.Data.ConnectionState.Open)
             await command.Connection.OpenAsync(cancellationToken);
-
         command.CommandText = $"PRAGMA table_info('{tableName}');";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             columns.Add(reader.GetString(1));
-
         return columns;
     }
 }
