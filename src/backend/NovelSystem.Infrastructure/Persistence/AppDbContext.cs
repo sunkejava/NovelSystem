@@ -19,6 +19,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<NovelChapter> NovelChapters => Set<NovelChapter>();
     public DbSet<PronunciationEntry> PronunciationEntries => Set<PronunciationEntry>();
     public DbSet<NovelQaIssue> NovelQaIssues => Set<NovelQaIssue>();
+    public DbSet<ScriptAudioVersion> ScriptAudioVersions => Set<ScriptAudioVersion>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -75,9 +76,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 var entry = entries[originalIndex];
                 var normalizedText = NormalizeSourceText(entry.Entity.Text);
                 var position = FindSourcePosition(source, normalizedText, cursor);
-
-                // 如果严格从 cursor 往后未找到，再从当前批次锚点找一次，避免某条模型文本略有差异
-                // 导致后续全部无法定位；仍不从全文开头搜索，避免误匹配前文重复对白。
                 if (position < 0)
                     position = FindSourcePosition(source, normalizedText, searchStart);
 
@@ -102,7 +100,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                     .OrderBy(x => x.SourcePosition < 0 ? int.MaxValue : x.SourcePosition)
                     .ThenBy(x => x.OriginalIndex)
                     .ToList();
-
                 var firstOrder = entries.Min(x => x.Entity.Order);
                 for (var index = 0; index < ordered.Count; index++)
                     ordered[index].Entry.Entity.Order = firstOrder + index;
@@ -134,9 +131,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     }
 
     private static string NormalizeSourceText(string value)
-        => value.Trim()
-            .Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Replace('\r', '\n');
+        => value.Trim().Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -147,6 +142,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.Entity<NovelChapter>().HasIndex(x => new { x.NovelId, x.ChapterOrder });
         modelBuilder.Entity<PronunciationEntry>().HasIndex(x => new { x.NovelId, x.Pattern });
         modelBuilder.Entity<NovelQaIssue>().HasIndex(x => new { x.NovelId, x.Resolved, x.Severity });
+        modelBuilder.Entity<ScriptAudioVersion>().HasIndex(x => new { x.ScriptLineId, x.VersionNo }).IsUnique();
+        modelBuilder.Entity<ScriptAudioVersion>().HasIndex(x => new { x.NovelId, x.ScriptLineId, x.IsSelected });
         modelBuilder.Entity<VoiceProfile>().HasIndex(x => x.Name);
         modelBuilder.Entity<AiTokenUsage>().HasIndex(x => new { x.NovelId, x.JobId, x.Operation });
         modelBuilder.Entity<AiTokenUsage>().HasIndex(x => x.CreatedAt);
