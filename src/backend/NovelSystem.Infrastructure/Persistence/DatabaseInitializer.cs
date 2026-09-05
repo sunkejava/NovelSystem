@@ -48,7 +48,8 @@ public static class DatabaseInitializer
             ["TtsDefaultLanguage"] = "Chinese",
             ["VoiceDirectory"] = "voices",
             ["PromptDirectory"] = "storage/prompts",
-            ["FfmpegPath"] = "ffmpeg"
+            ["FfmpegPath"] = "ffmpeg",
+            ["FfprobePath"] = "ffprobe"
         };
 
         foreach (var item in defaults)
@@ -133,10 +134,8 @@ public static class DatabaseInitializer
                 "Error" TEXT NULL,
                 "CreatedAt" TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS "IX_AiTokenUsages_NovelId_JobId_Operation"
-                ON "AiTokenUsages" ("NovelId","JobId","Operation");
-            CREATE INDEX IF NOT EXISTS "IX_AiTokenUsages_CreatedAt"
-                ON "AiTokenUsages" ("CreatedAt");
+            CREATE INDEX IF NOT EXISTS "IX_AiTokenUsages_NovelId_JobId_Operation" ON "AiTokenUsages" ("NovelId","JobId","Operation");
+            CREATE INDEX IF NOT EXISTS "IX_AiTokenUsages_CreatedAt" ON "AiTokenUsages" ("CreatedAt");
             """, cancellationToken);
     }
 
@@ -192,7 +191,7 @@ public static class DatabaseInitializer
             await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 
-    /// <summary>第一阶段专业制作能力：章节、原文偏移、发音词典、质量检测。</summary>
+    /// <summary>专业制作能力：章节、原文偏移、发音词典、QA、音频时间轴与 A/B 版本。</summary>
     private static async Task EnsureProductionSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
     {
         await db.Database.ExecuteSqlRawAsync("""
@@ -232,6 +231,19 @@ public static class DatabaseInitializer
                 "CreatedAt" TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS "IX_NovelQaIssues_NovelId_Resolved_Severity" ON "NovelQaIssues" ("NovelId","Resolved","Severity");
+
+            CREATE TABLE IF NOT EXISTS "ScriptAudioVersions" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_ScriptAudioVersions" PRIMARY KEY AUTOINCREMENT,
+                "NovelId" INTEGER NOT NULL,
+                "ScriptLineId" INTEGER NOT NULL,
+                "VersionNo" INTEGER NOT NULL,
+                "FilePath" TEXT NOT NULL,
+                "DurationMs" INTEGER NOT NULL DEFAULT 0,
+                "IsSelected" INTEGER NOT NULL DEFAULT 0,
+                "CreatedAt" TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_ScriptAudioVersions_ScriptLineId_VersionNo" ON "ScriptAudioVersions" ("ScriptLineId","VersionNo");
+            CREATE INDEX IF NOT EXISTS "IX_ScriptAudioVersions_NovelId_ScriptLineId_IsSelected" ON "ScriptAudioVersions" ("NovelId","ScriptLineId","IsSelected");
             """, cancellationToken);
 
         var scriptColumns = await GetColumnsAsync(db, "ScriptLines", cancellationToken);
