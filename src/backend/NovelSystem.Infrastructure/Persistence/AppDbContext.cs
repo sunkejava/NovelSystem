@@ -22,6 +22,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ScriptAudioVersion> ScriptAudioVersions => Set<ScriptAudioVersion>();
     public DbSet<ProductionTrack> ProductionTracks => Set<ProductionTrack>();
     public DbSet<ProductionTrackClip> ProductionTrackClips => Set<ProductionTrackClip>();
+    public DbSet<SoundDesignCue> SoundDesignCues => Set<SoundDesignCue>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -144,6 +145,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.Entity<ProductionTrack>().HasIndex(x => new { x.NovelId, x.Order });
         modelBuilder.Entity<ProductionTrackClip>().HasIndex(x => new { x.TrackId, x.StartMs });
         modelBuilder.Entity<ProductionTrackClip>().HasIndex(x => new { x.NovelId, x.StartMs });
+        modelBuilder.Entity<SoundDesignCue>().HasIndex(x => new { x.NovelId, x.ChapterId, x.StartMs });
+        modelBuilder.Entity<SoundDesignCue>().HasIndex(x => new { x.NovelId, x.Approved, x.Applied });
         modelBuilder.Entity<VoiceProfile>().HasIndex(x => x.Name);
         modelBuilder.Entity<AiTokenUsage>().HasIndex(x => new { x.NovelId, x.JobId, x.Operation });
         modelBuilder.Entity<AiTokenUsage>().HasIndex(x => x.CreatedAt);
