@@ -20,6 +20,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<PronunciationEntry> PronunciationEntries => Set<PronunciationEntry>();
     public DbSet<NovelQaIssue> NovelQaIssues => Set<NovelQaIssue>();
     public DbSet<ScriptAudioVersion> ScriptAudioVersions => Set<ScriptAudioVersion>();
+    public DbSet<ProductionTrack> ProductionTracks => Set<ProductionTrack>();
+    public DbSet<ProductionTrackClip> ProductionTrackClips => Set<ProductionTrackClip>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -27,11 +29,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         return await base.SaveChangesAsync(cancellationToken);
     }
 
-    /// <summary>
-    /// LLM 正常情况下会按原文返回 s 数组，但 JSON 修复、强约束重试或模型本身仍可能偶发交换元素。
-    /// 在新增脚本真正写库前，利用“脚本文本必须来自原文”这一强约束恢复本批顺序，
-    /// 同时写入 SourceStart/SourceEnd，并根据原文偏移自动关联 ChapterId。
-    /// </summary>
     private async Task RestoreAddedScriptOrderAndOffsetsAsync(CancellationToken cancellationToken)
     {
         var added = ChangeTracker.Entries<ScriptLine>()
@@ -144,6 +141,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.Entity<NovelQaIssue>().HasIndex(x => new { x.NovelId, x.Resolved, x.Severity });
         modelBuilder.Entity<ScriptAudioVersion>().HasIndex(x => new { x.ScriptLineId, x.VersionNo }).IsUnique();
         modelBuilder.Entity<ScriptAudioVersion>().HasIndex(x => new { x.NovelId, x.ScriptLineId, x.IsSelected });
+        modelBuilder.Entity<ProductionTrack>().HasIndex(x => new { x.NovelId, x.Order });
+        modelBuilder.Entity<ProductionTrackClip>().HasIndex(x => new { x.TrackId, x.StartMs });
+        modelBuilder.Entity<ProductionTrackClip>().HasIndex(x => new { x.NovelId, x.StartMs });
         modelBuilder.Entity<VoiceProfile>().HasIndex(x => x.Name);
         modelBuilder.Entity<AiTokenUsage>().HasIndex(x => new { x.NovelId, x.JobId, x.Operation });
         modelBuilder.Entity<AiTokenUsage>().HasIndex(x => x.CreatedAt);
