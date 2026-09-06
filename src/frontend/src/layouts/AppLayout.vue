@@ -12,6 +12,7 @@ const menus=[
   {path:'/novels',label:'小说资产',icon:Document},
   {path:'/production',label:'专业制作',icon:Operation,exact:true},
   {path:'/production-daw',label:'读听混音',icon:Headset,exact:true},
+  {path:'/sound-director',label:'AI 声音导演',icon:MagicStick,exact:true},
   {path:'/jobs',label:'任务中枢',icon:Operation},
   {path:'/styles',label:'写作风格',icon:MagicStick},
   {path:'/writing',label:'AI 创作舱',icon:MagicStick},
