@@ -28,6 +28,14 @@ export const productionApi={
   mixedPlayUrl:(novelId:number|string)=>'/api/production/novels/'+novelId+'/tracks/mixed/play',
   mixedDownloadUrl:(novelId:number|string)=>'/api/production/novels/'+novelId+'/tracks/mixed/download',
 
+  soundDesign:(novelId:number|string,params:any={})=>http.get('/production/novels/'+novelId+'/sound-design',{params}).then(r=>r.data),
+  analyzeSoundDesignChapter:(novelId:number|string,chapterId:number|string)=>http.post('/production/novels/'+novelId+'/sound-design/analyze/'+chapterId).then(r=>r.data),
+  updateSoundCue:(id:number|string,payload:any)=>http.put('/production/sound-design/'+id,payload).then(r=>r.data),
+  approveSoundCue:(id:number|string,approved:boolean)=>http.put('/production/sound-design/'+id+'/approve',{},{params:{approved}}).then(r=>r.data),
+  approveAllSoundCues:(novelId:number|string,chapterId?:number|string)=>http.post('/production/novels/'+novelId+'/sound-design/approve-all',{},{params:{chapterId}}).then(r=>r.data),
+  applySoundCues:(novelId:number|string,chapterId?:number|string)=>http.post('/production/novels/'+novelId+'/sound-design/apply',{},{params:{chapterId}}).then(r=>r.data),
+  removeSoundCue:(id:number|string)=>http.delete('/production/sound-design/'+id),
+
   pronunciations:(novelId:number|string)=>http.get('/production/novels/'+novelId+'/pronunciations').then(r=>r.data),
   createPronunciation:(novelId:number|string,payload:any)=>http.post('/production/novels/'+novelId+'/pronunciations',payload).then(r=>r.data),
   updatePronunciation:(id:number|string,payload:any)=>http.put('/production/pronunciations/'+id,payload).then(r=>r.data),
