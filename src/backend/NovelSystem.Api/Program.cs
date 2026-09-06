@@ -17,9 +17,14 @@ Directory.CreateDirectory("data");
 Directory.CreateDirectory("storage/audio");
 Directory.CreateDirectory("storage/output");
 Directory.CreateDirectory("storage/prompts");
+Directory.CreateDirectory("storage/production");
 
 using (var scope = app.Services.CreateScope())
-    await DatabaseInitializer.InitializeAsync(scope.ServiceProvider.GetRequiredService<AppDbContext>());
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await DatabaseInitializer.InitializeAsync(db);
+    await ProductionTrackSchemaInitializer.EnsureAsync(db);
+}
 
 app.UseCors();
 app.MapOpenApi();
