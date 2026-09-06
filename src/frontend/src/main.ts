@@ -5,6 +5,7 @@ import 'element-plus/dist/index.css';
 import './styles/index.css';
 import './styles/production.css';
 import './styles/production-phase2.css';
+import './styles/sound-director.css';
 import App from './App.vue';
 import router from './router';
 
