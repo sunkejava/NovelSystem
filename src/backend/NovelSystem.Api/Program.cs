@@ -39,4 +39,5 @@ app.MapTokenUsageEndpoints();
 app.MapAnalysisDiagnosticsEndpoints();
 app.MapProductionEndpoints();
 app.MapProductionStageThreeEndpoints();
+app.MapSoundDesignEndpoints();
 app.Run();
