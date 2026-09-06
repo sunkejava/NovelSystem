@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {useRoute,useRouter} from 'vue-router';
-import {DataAnalysis,Document,MagicStick,Setting,Operation,Cpu,Moon,Sunny,TrendCharts} from '@element-plus/icons-vue';
+import {DataAnalysis,Document,MagicStick,Setting,Operation,Cpu,Moon,Sunny,TrendCharts,Headset} from '@element-plus/icons-vue';
 import {useTheme} from '../composables/useTheme';
 
 const route=useRoute();
@@ -10,14 +10,15 @@ const {mode,accent,toggle,setAccent}=useTheme();
 const menus=[
   {path:'/dashboard',label:'智能总览',icon:DataAnalysis},
   {path:'/novels',label:'小说资产',icon:Document},
-  {path:'/production',label:'专业制作',icon:Operation},
+  {path:'/production',label:'专业制作',icon:Operation,exact:true},
+  {path:'/production-daw',label:'读听混音',icon:Headset,exact:true},
   {path:'/jobs',label:'任务中枢',icon:Operation},
   {path:'/styles',label:'写作风格',icon:MagicStick},
   {path:'/writing',label:'AI 创作舱',icon:MagicStick},
   {path:'/tokens',label:'Token统计',icon:TrendCharts},
   {path:'/settings',label:'模型设置',icon:Setting}
 ];
-
+function menuActive(item:any){return item.exact?route.path===item.path:route.path.startsWith(item.path);}
 const accents=['#43e8ff','#7c6cff','#ff4fd8','#21d19f','#ff9f43'];
 </script>
 
@@ -30,7 +31,7 @@ const accents=['#43e8ff','#7c6cff','#ff4fd8','#21d19f','#ff9f43'];
       <div><strong>NOVEL<span>AI</span></strong><small>STORY INTELLIGENCE</small></div>
     </div>
     <nav>
-      <button v-for="item in menus" :key="item.path" class="nav-item" :class="{active:route.path.startsWith(item.path)}" @click="router.push(item.path)">
+      <button v-for="item in menus" :key="item.path" class="nav-item" :class="{active:menuActive(item)}" @click="router.push(item.path)">
         <el-icon><component :is="item.icon"/></el-icon><span>{{item.label}}</span><i></i>
       </button>
     </nav>
