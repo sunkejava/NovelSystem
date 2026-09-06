@@ -11,6 +11,23 @@ export const productionApi={
   selectVersion:(versionId:number|string)=>http.put('/production/timeline/versions/'+versionId+'/select').then(r=>r.data),
   removeVersion:(versionId:number|string)=>http.delete('/production/timeline/versions/'+versionId),
   versionPlayUrl:(versionId:number|string)=>'/api/production/timeline/versions/'+versionId+'/play',
+
+  syncChapters:(novelId:number|string)=>http.get('/production/novels/'+novelId+'/sync/chapters').then(r=>r.data),
+  syncChapter:(novelId:number|string,chapterId:number|string)=>http.get('/production/novels/'+novelId+'/sync/chapter/'+chapterId).then(r=>r.data),
+
+  tracks:(novelId:number|string)=>http.get('/production/novels/'+novelId+'/tracks').then(r=>r.data),
+  ensureDefaultTracks:(novelId:number|string)=>http.post('/production/novels/'+novelId+'/tracks/defaults').then(r=>r.data),
+  createTrack:(novelId:number|string,payload:any)=>http.post('/production/novels/'+novelId+'/tracks',payload).then(r=>r.data),
+  updateTrack:(trackId:number|string,payload:any)=>http.put('/production/tracks/'+trackId,payload).then(r=>r.data),
+  removeTrack:(trackId:number|string)=>http.delete('/production/tracks/'+trackId),
+  uploadClip:(trackId:number|string,form:FormData)=>http.post('/production/tracks/'+trackId+'/clips/upload',form,{headers:{'Content-Type':'multipart/form-data'}}).then(r=>r.data),
+  updateClip:(clipId:number|string,payload:any)=>http.put('/production/tracks/clips/'+clipId,payload).then(r=>r.data),
+  removeClip:(clipId:number|string)=>http.delete('/production/tracks/clips/'+clipId),
+  clipPlayUrl:(clipId:number|string)=>'/api/production/tracks/clips/'+clipId+'/play',
+  mixTracks:(novelId:number|string)=>http.post('/production/novels/'+novelId+'/tracks/mix').then(r=>r.data),
+  mixedPlayUrl:(novelId:number|string)=>'/api/production/novels/'+novelId+'/tracks/mixed/play',
+  mixedDownloadUrl:(novelId:number|string)=>'/api/production/novels/'+novelId+'/tracks/mixed/download',
+
   pronunciations:(novelId:number|string)=>http.get('/production/novels/'+novelId+'/pronunciations').then(r=>r.data),
   createPronunciation:(novelId:number|string,payload:any)=>http.post('/production/novels/'+novelId+'/pronunciations',payload).then(r=>r.data),
   updatePronunciation:(id:number|string,payload:any)=>http.put('/production/pronunciations/'+id,payload).then(r=>r.data),
